@@ -1,0 +1,248 @@
+% -*- coding: utf-8 -*-
+%-------------------------designed by zcf--------------
+\documentclass[UTF8,a4paper,10pt]{ctexart}
+\usepackage[left=3.17cm, right=3.17cm, top=2.74cm, bottom=2.74cm]{geometry}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{cite}
+\usepackage{caption}
+\usepackage{enumerate}
+\usepackage{booktabs} %表格
+\usepackage{multirow}
+\usepackage{subcaption}    % 插入子图
+\usepackage[table]{xcolor}
+\usepackage{siunitx}
+\usepackage{tcolorbox}
+\tcbuselibrary{listings,breakable}
+\usepackage{fontspec} % 允许使用 Unicode 字体
+\usepackage{mdframed}
+\usepackage{tabularx}
+\usepackage{textcomp}
+
+\usepackage{minted}
+\usepackage{xcolor}
+\usepackage{geometry}
+\geometry{a4paper, margin=1in}
+
+\usepackage{alltt}
+
+
+\definecolor{rootcolor}{RGB}{0,70,140}
+\definecolor{levelone}{RGB}{220,120,20}
+\definecolor{leveltwo}{RGB}{150,70,200}
+\definecolor{levelthree}{RGB}{0,150,200}
+\definecolor{leafgreen}{RGB}{0,150,70}
+
+\sisetup{
+  table-format = +3.3,
+  detect-weight = true,
+  detect-inline-weight = math,
+  round-mode = places,
+  round-precision = 3
+}
+\mdfdefinestyle{topbottom}{
+  linewidth=1pt,
+  topline=true,
+  bottomline=true,
+  leftline=false,
+  rightline=false,
+  skipabove=10pt,
+  skipbelow=10pt,
+  innertopmargin=6pt,
+  innerbottommargin=6pt,
+  backgroundcolor=gray!5   % 淡灰背景（可去掉）
+}
+
+\newcommand{\tabincell}[2]{\begin{tabular}{@{}#1@{}}#2\end{tabular}}  %表格强制换行
+%-------------------------字体设置--------------
+% 中文字体
+\setCJKmainfont[AutoFakeBold=true]{Kaiti SC}
+\setCJKsansfont{Yuanti SC}
+\setCJKmonofont{Kaiti SC}
+\newCJKfontfamily\headinghei{Hei}
+% 英文字体
+\setmainfont{Palatino}
+\setsansfont{Annai MN}
+\setmonofont{Menlo}
+
+\newcommand{\yihao}{\fontsize{26pt}{36pt}\selectfont}           % 一号, 1.4 倍行距
+\newcommand{\erhao}{\fontsize{22pt}{28pt}\selectfont}          % 二号, 1.25倍行距
+\newcommand{\xiaoer}{\fontsize{18pt}{18pt}\selectfont}          % 小二, 单倍行距
+\newcommand{\sanhao}{\fontsize{16pt}{24pt}\selectfont}  %三号字
+\newcommand{\xiaosan}{\fontsize{15pt}{22pt}\selectfont}        % 小三, 1.5倍行距
+\newcommand{\sihao}{\fontsize{14pt}{21pt}\selectfont}            % 四号, 1.5 倍行距
+\newcommand{\banxiaosi}{\fontsize{13pt}{19.5pt}\selectfont}    % 半小四, 1.5倍行距
+\newcommand{\xiaosi}{\fontsize{12pt}{18pt}\selectfont}            % 小四, 1.5倍行距
+\newcommand{\dawuhao}{\fontsize{11pt}{11pt}\selectfont}       % 大五号, 单倍行距
+\newcommand{\wuhao}{\fontsize{10.5pt}{15.75pt}\selectfont}    % 五号, 单倍行距
+%-------------------------章节名----------------
+\renewcommand\thesubsection{\arabic{subsection}}
+\renewcommand\thesubsubsection{\thesubsection.\arabic{subsubsection}}
+
+\ctexset{
+  section = {
+    name = {,、},
+    number = \chinese{section},
+    format = \Large\bfseries\centering\headinghei,
+  },
+  subsection = {
+    name = {,、},
+    number = \arabic{subsection},
+    format = \large\bfseries\headinghei,
+    indent = 0em,
+    beforeskip = 1.0ex,
+    afterskip = 1.0ex,
+  },
+  subsubsection = {
+    name = {,},
+    number = \thesubsubsection,
+    format = \wuhao\bfseries\headinghei,  
+    indent = 0em,
+    beforeskip = 1.0ex,
+    afterskip = 1.0ex,
+  }
+}
+%-------------------------页眉页脚--------------
+\usepackage{lastpage}
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\lhead{\kaishu \leftmark}
+% \chead{}
+\rhead{\kaishu 深度学习}%加粗\bfseries 
+\lfoot{}
+\rfoot{}
+\renewcommand{\headrulewidth}{0.1pt}  
+\renewcommand{\footrulewidth}{0pt}%去掉横线
+\newcommand{\HRule}{\rule{\linewidth}{0.5mm}}%标题横线
+\newcommand{\HRulegrossa}{\rule{\linewidth}{1.2mm}}
+%-----------------------伪代码------------------
+\usepackage{algorithm}  
+\usepackage{algorithmicx}  
+\usepackage{algpseudocode}  
+\floatname{algorithm}{Algorithm}  
+\renewcommand{\algorithmicrequire}{\textbf{Input:}}  
+\renewcommand{\algorithmicensure}{\textbf{Output:}} 
+\usepackage{lipsum}  
+\makeatletter
+\newenvironment{breakablealgorithm}
+  {% \begin{breakablealgorithm}
+  \begin{center}
+     \refstepcounter{algorithm}% New algorithm
+     \hrule height.8pt depth0pt \kern2pt% \@fs@pre for \@fs@ruled
+     \renewcommand{\caption}[2][\relax]{% Make a new \caption
+      {\raggedright\textbf{\ALG@name~\thealgorithm} ##2\par}%
+      \ifx\relax##1\relax % #1 is \relax
+         \addcontentsline{loa}{algorithm}{\protect\numberline{\thealgorithm}##2}%
+      \else % #1 is not \relax
+         \addcontentsline{loa}{algorithm}{\protect\numberline{\thealgorithm}##1}%
+      \fi
+      \kern2pt\hrule\kern2pt
+     }
+  }{% \end{breakablealgorithm}
+     \kern2pt\hrule\relax% \@fs@post for \@fs@ruled
+  \end{center}
+  }
+\makeatother
+
+\cfoot{\thepage\ of \pageref{LastPage}}%当前页 of 总页数
+%------------------------代码-------------------
+\usepackage{xcolor} 
+\usepackage{listings} 
+\lstset{ 
+breaklines,%自动换行
+basicstyle=\small,
+keywordstyle=\color{ blue!70} \bfseries,
+commentstyle=\color{red!50!green!50!blue!50},% 
+stringstyle=\ttfamily,% 
+extendedchars=false,% 
+linewidth=\textwidth,% 
+numbers=left,% 
+numberstyle=\tiny \color{blue!50},% 
+frame=trbl,%
+rulesepcolor= \color{ red!20!green!20!blue!20} 
+}
+\setminted{
+  linenos,
+  breaklines,
+  fontsize=\small,
+  frame=lines,
+  numbersep=5pt,
+  bgcolor=gray!5,
+  tabsize=4
+}
+%------------超链接----------
+\usepackage[colorlinks,linkcolor=black,anchorcolor=blue]{hyperref}
+%------------------------TODO-------------------
+\usepackage{enumitem,amssymb}
+\newlist{todolist}{itemize}{2}
+\setlist[todolist]{label=$\square$}
+% for check symbol 
+\usepackage{pifont}
+\newcommand{\cmark}{\ding{51}}%
+\newcommand{\xmark}{\ding{55}}%
+\newcommand{\done}{\rlap{$\square$}{\raisebox{2pt}{\large\hspace{1pt}\cmark}}\hspace{-2.5pt}}
+\newcommand{\wontfix}{\rlap{$\square$}{\large\hspace{1pt}\xmark}}
+%------------------------水印-------------------
+\usepackage{tikz}
+\usepackage{xcolor}
+\usepackage{eso-pic}
+
+\newcommand{\watermark}[3]{\AddToShipoutPictureBG{
+\parbox[b][\paperheight]{\paperwidth}{
+\vfill%
+\centering%
+\tikz[remember picture, overlay]%
+  \node [rotate = #1, scale = #2] at (current page.center)%
+    {\textcolor{gray!80!cyan!30!magenta!30}{#3}};
+\vfill}}}
+
+%———————————————————————————————————————————正文———————————————————————————————————————————————
+%----------------------------------------------
+\begin{document}
+\begin{titlepage}
+    \begin{center}
+    \includegraphics[width=0.8\textwidth]{fig/NKU.png}\\[1cm]    
+    \textsc{\Huge \kaishu{\textbf{南\ \ \ \ \ \ 开\ \ \ \ \ \ 大\ \ \ \ \ \ 学}} }\\[0.9cm]
+    \textsc{\huge \kaishu{\textbf{计\ \ 算\ \ 机\ \ 学\ \ 院}}}\\[0.5cm]
+    \textsc{\Large \textbf{《深度学习与应用》期末大作业}}\\[0.8cm]
+    \HRule \\[0.9cm]
+    { \LARGE \bfseries 基于 PyTorch 的显著性目标检测模型}\\[0.4cm]
+    \HRule \\[2.0cm]
+    \centering
+    \kaishu\LARGE
+    \renewcommand{\arraystretch}{1.6}
+    \setlength{\tabcolsep}{12pt}
+
+    \begin{tabular}{c c c c}
+    成员 1：& 陈天祺 & 2313857 & 计算机科学与技术 \\
+    成员 2：& 邵莫涵 & 2311366 & 计算机科学与技术 \\
+    成员 3：& 杨欣瑞 & 2312246 & 计算机科学与技术 \\
+    \end{tabular}
+    \vfill
+    {\Large \today}
+    \end{center}
+\end{titlepage}
+%-------------目-------录-----------------------------------------
+\newpage
+\pagenumbering{gobble} % 封面和目录不显示页码
+\tableofcontents
+\thispagestyle{empty}
+
+
+%----------------------------------------------------------------
+\newpage
+\pagenumbering{arabic}
+\setcounter{page}{1}
+\section{实验概述}
+
+ResNet 通过残差连接缓解了深层网络训练困难的问题 \cite{he2015resnet}。
+
+
+%----------------------------------------------------------------
+\label{LastMainPage}
+\newpage
+\bibliographystyle{plain}
+\bibliography{references}
+
+\end{document}
