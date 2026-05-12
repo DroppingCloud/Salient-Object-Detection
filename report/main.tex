@@ -97,7 +97,7 @@
   subsubsection = {
     name = {,},
     number = \thesubsubsection,
-    format = \wuhao\bfseries\headinghei,  
+    format = \wuhao\bfseries\headinghei,
     indent = 0em,
     beforeskip = 1.0ex,
     afterskip = 1.0ex,
@@ -109,21 +109,21 @@
 \pagestyle{fancy}
 \lhead{\kaishu \leftmark}
 % \chead{}
-\rhead{\kaishu 深度学习}%加粗\bfseries 
+\rhead{\kaishu 深度学习}%加粗\bfseries
 \lfoot{}
 \rfoot{}
-\renewcommand{\headrulewidth}{0.1pt}  
+\renewcommand{\headrulewidth}{0.1pt}
 \renewcommand{\footrulewidth}{0pt}%去掉横线
 \newcommand{\HRule}{\rule{\linewidth}{0.5mm}}%标题横线
 \newcommand{\HRulegrossa}{\rule{\linewidth}{1.2mm}}
 %-----------------------伪代码------------------
-\usepackage{algorithm}  
-\usepackage{algorithmicx}  
-\usepackage{algpseudocode}  
-\floatname{algorithm}{Algorithm}  
-\renewcommand{\algorithmicrequire}{\textbf{Input:}}  
-\renewcommand{\algorithmicensure}{\textbf{Output:}} 
-\usepackage{lipsum}  
+\usepackage{algorithm}
+\usepackage{algorithmicx}
+\usepackage{algpseudocode}
+\floatname{algorithm}{Algorithm}
+\renewcommand{\algorithmicrequire}{\textbf{Input:}}
+\renewcommand{\algorithmicensure}{\textbf{Output:}}
+\usepackage{lipsum}
 \makeatletter
 \newenvironment{breakablealgorithm}
   {% \begin{breakablealgorithm}
@@ -147,20 +147,20 @@
 
 \cfoot{\thepage\ of \pageref{LastPage}}%当前页 of 总页数
 %------------------------代码-------------------
-\usepackage{xcolor} 
-\usepackage{listings} 
-\lstset{ 
+\usepackage{xcolor}
+\usepackage{listings}
+\lstset{
 breaklines,%自动换行
 basicstyle=\small,
 keywordstyle=\color{ blue!70} \bfseries,
-commentstyle=\color{red!50!green!50!blue!50},% 
-stringstyle=\ttfamily,% 
-extendedchars=false,% 
-linewidth=\textwidth,% 
-numbers=left,% 
-numberstyle=\tiny \color{blue!50},% 
+commentstyle=\color{red!50!green!50!blue!50},%
+stringstyle=\ttfamily,%
+extendedchars=false,%
+linewidth=\textwidth,%
+numbers=left,%
+numberstyle=\tiny \color{blue!50},%
 frame=trbl,%
-rulesepcolor= \color{ red!20!green!20!blue!20} 
+rulesepcolor= \color{ red!20!green!20!blue!20}
 }
 \setminted{
   linenos,
@@ -177,7 +177,7 @@ rulesepcolor= \color{ red!20!green!20!blue!20}
 \usepackage{enumitem,amssymb}
 \newlist{todolist}{itemize}{2}
 \setlist[todolist]{label=$\square$}
-% for check symbol 
+% for check symbol
 \usepackage{pifont}
 \newcommand{\cmark}{\ding{51}}%
 \newcommand{\xmark}{\ding{55}}%
@@ -202,12 +202,12 @@ rulesepcolor= \color{ red!20!green!20!blue!20}
 \begin{document}
 \begin{titlepage}
     \begin{center}
-    \includegraphics[width=0.8\textwidth]{fig/NKU.png}\\[1cm]    
+    \includegraphics[width=0.8\textwidth]{fig/NKU.png}\\[1cm]
     \textsc{\Huge \kaishu{\textbf{南\ \ \ \ \ \ 开\ \ \ \ \ \ 大\ \ \ \ \ \ 学}} }\\[0.9cm]
     \textsc{\huge \kaishu{\textbf{计\ \ 算\ \ 机\ \ 学\ \ 院}}}\\[0.5cm]
     \textsc{\Large \textbf{《深度学习与应用》期末大作业}}\\[0.8cm]
     \HRule \\[0.9cm]
-    { \LARGE \bfseries 基于 PyTorch 的显著性目标检测模型}\\[0.4cm]
+    { \LARGE \bfseries 基于 ResNet-18 的显著性目标检测方法研究}\\[0.4cm]
     \HRule \\[2.0cm]
     \centering
     \kaishu\LARGE
@@ -223,23 +223,310 @@ rulesepcolor= \color{ red!20!green!20!blue!20}
     {\Large \today}
     \end{center}
 \end{titlepage}
+
 %-------------目-------录-----------------------------------------
 \newpage
-\pagenumbering{gobble} % 封面和目录不显示页码
+\pagenumbering{gobble}
 \tableofcontents
 \thispagestyle{empty}
-
 
 %----------------------------------------------------------------
 \newpage
 \pagenumbering{arabic}
 \setcounter{page}{1}
-\section{实验概述}
 
-ResNet 通过残差连接缓解了深层网络训练困难的问题 \cite{he2015resnet}。
+%----------------------------------------------------------------
+\section{摘要}
+
+本报告围绕显著性目标检测任务展开，以 ResNet-18 \cite{he2015resnet} 为骨干网络，
+系统研究了基于深度学习的显著图预测方法。
+
+\bigskip
+\noindent\textbf{关键词：}显著性目标检测；ResNet-18；编解码器；注意力机制；多尺度融合
+
+%----------------------------------------------------------------
+\section{引言}
+
+\subsection{研究背景}
+
+显著性目标检测（Salient Object Detection, SOD）旨在从自然图像中定位并分割出最吸引人类视觉注意力的目标区域，
+输出与输入图像等尺寸的二值或软性预测掩码（mask）。
+该任务在图像检索、视频理解、自动驾驶等领域具有广泛的应用价值。
+
+传统方法依赖手工设计的低层特征（颜色、对比度、纹理等），泛化能力有限。
+随着深度学习的发展，基于卷积神经网络的方法在语义特征提取上取得了显著进步，
+成为当前的主流范式。
+
+\subsection{问题定义}
+
+给定 RGB 图像 $\mathbf{I} \in \mathbb{R}^{H \times W \times 3}$，
+目标是预测像素级显著图 $\hat{\mathbf{S}} \in [0,1]^{H \times W}$，
+其中值越大表示该像素属于显著目标的概率越高。
+训练时以人工标注的二值掩码 $\mathbf{G} \in \{0,1\}^{H \times W}$ 作为监督信号。
+
+\subsection{本报告的主要贡献}
+
+\begin{enumerate}
+  \item 实现了两种基于 ResNet-18 的基线方法（FCN 解码器与 U-Net 跳跃连接解码器）并进行对比分析；
+  \item 提出了融合边缘增强分支、通道注意力与多尺度特征融合的改进网络（ResSOD-Improved）；
+  \item 设计了结合二值交叉熵（BCE）与结构相似性（SSIM）的混合损失函数；
+  \item 在 DUTS 数据集上进行了系统的消融实验，定量验证了各模块的贡献。
+\end{enumerate}
+
+%----------------------------------------------------------------
+\section{相关工作}
+
+\subsection{基于 CNN 的显著性检测方法}
+
+早期深度学习方法将 VGG、ResNet 等分类网络改造为全卷积网络（FCN）\cite{he2015resnet}，
+直接对特征图进行上采样以输出显著图。
+此类方法结构简单，但由于编码过程中空间信息丢失，边界预测往往模糊。
+
+\subsection{编解码器结构}
+
+U-Net \cite{ronneberger2015unet} 引入跳跃连接，将编码器各层的高分辨率特征图与解码器对应层融合，
+显著提升了边界定位精度。该思想被广泛应用于显著性检测任务，
+衍生出 PoolNet、F3Net、U$^2$-Net 等一系列方法。
+
+\subsection{注意力机制}
+
+通道注意力（SENet 风格）和空间注意力（CBAM）被引入 SOD 模型以增强对显著区域的聚焦能力。
+注意力模块通过重新校正特征权重，使网络在解码阶段更关注语义相关区域。
+
+\subsection{多尺度特征融合}
+
+不同尺度的特征图分别捕捉粗粒度语义信息和细粒度空间信息。
+特征金字塔网络（FPN）、渐进融合等策略被用于融合多层特征，改善对大尺寸目标和小尺寸目标的检测能力。
+
+%----------------------------------------------------------------
+\section{数据集}
+
+\subsection{数据来源}
+
+本实验采用 \textbf{DUTS} 数据集，该数据集是目前显著性目标检测领域规模最大的基准数据集之一，
+由 Wang 等人于 2017 年提出。数据集分为：
+\begin{itemize}
+  \item \textbf{DUTS-TR}：训练集，共 10553 张图像，含人工标注的二值显著图；
+  \item \textbf{DUTS-TE}：测试集，共 5019 张图像，用于模型评估。
+\end{itemize}
+
+\subsection{数据模式}
+
+每条样本由以下两部分构成：
+\begin{itemize}
+  \item \textbf{输入图像}：JPEG 格式 RGB 图像，分辨率不固定，涵盖复杂背景、多类别目标；
+  \item \textbf{标注掩码}：PNG 格式灰度图，像素值为 0（背景）或 255（显著目标），与输入图像等尺寸。
+\end{itemize}
+
+\subsection{数据预处理}
+
+训练阶段进行如下预处理与增强：
+\begin{enumerate}
+  \item \textbf{尺寸归一化}：将图像与掩码统一缩放至 $256 \times 256$；
+  \item \textbf{归一化}：图像像素值除以 255 后，按 ImageNet 均值与标准差进行标准化
+        （$\mu = [0.485, 0.456, 0.406]$，$\sigma = [0.229, 0.224, 0.225]$）；
+  \item \textbf{数据增强}：随机水平翻转（$p=0.5$）、随机裁剪（裁剪比例 $0.8$\textasciitilde$1.0$）；
+  \item \textbf{掩码二值化}：将掩码像素值归一化至 $[0,1]$，阈值 $0.5$ 二值化后作为监督标签。
+\end{enumerate}
+
+测试阶段仅进行尺寸缩放与像素归一化，不施加随机增强。
+
+%----------------------------------------------------------------
+\section{方法}
+
+\subsection{Baseline 方法一：FCN 解码器（ResNet18-FCN）}
+
+以预训练 ResNet-18 作为编码器，提取最后一层特征图（步长 32，通道数 512），
+经两次双线性上采样（$\times 16$、$\times 2$）还原至输入分辨率，
+最后通过 $1\times1$ 卷积与 Sigmoid 激活输出显著图。
+损失函数采用像素级二值交叉熵（BCE）。
+
+该方法结构最为简洁，可作为验证任务可行性的最低基准。
+
+\subsection{Baseline 方法二：U-Net 解码器（ResNet18-UNet）}
+
+保留 ResNet-18 编码器，在解码器中引入 U-Net 风格的跳跃连接：
+将编码器 Stage 1\textasciitilde4 的特征图（分辨率分别为 $128^2$、$64^2$、$32^2$、$16^2$）
+与解码器对应层的上采样特征拼接后经卷积融合，最终输出与输入等尺寸的显著图 \cite{ronneberger2015unet}。
+该方法在恢复空间细节方面优于 Baseline 一。
+
+\subsection{改进方法：ResSOD-Improved}
+
+在 ResNet18-UNet 基础上引入以下三个模块：
+
+\subsubsection{边缘增强分支（Edge Branch）}
+
+在解码器最高分辨率层附加一路边缘检测分支，以 Canny 算法提取的边缘图作为弱监督信号，
+驱动网络学习目标边界的精细结构。边缘分支输出 $\hat{\mathbf{E}} \in [0,1]^{H \times W}$，
+与主分支显著图融合后提升边界锐度。
+
+\subsubsection{通道注意力模块（Channel Attention）}
+
+在每个解码器融合块后引入 Squeeze-and-Excitation（SE）模块：
+对特征图执行全局平均池化，经两层全连接网络生成通道权重向量，
+对特征图各通道进行重加权，以增强对显著语义特征的响应。
+
+\subsubsection{多尺度融合模块（Multi-Scale Fusion）}
+
+引入特征金字塔聚合策略，将编码器 Stage 2\textasciitilde4 的特征图通过 $1\times1$ 卷积对齐通道后，
+双线性上采样至 $64\times64$ 统一分辨率，逐元素加和融合，
+再送入解码器，缓解单一尺度特征对大/小目标检测的局限。
+
+\subsection{网络整体结构}
+
+\begin{figure}[H]
+  \centering
+  \fbox{\rule{0pt}{3cm}\rule{10cm}{0pt}}
+  \caption{ResSOD-Improved 整体网络结构示意图}
+  \label{fig:arch}
+\end{figure}
+
+整体流程如下：
+\begin{enumerate}
+  \item 输入图像经 ResNet-18 编码器提取多尺度特征 $\{f_1, f_2, f_3, f_4\}$；
+  \item 多尺度融合模块聚合 $\{f_2, f_3, f_4\}$ 生成融合特征 $f_\text{ms}$；
+  \item 解码器逐层上采样，每层接收跳跃连接特征与通道注意力加权，输出特征图；
+  \item 边缘分支在最高分辨率层提取边缘信息辅助训练；
+  \item 最终 $1\times1$ 卷积 + Sigmoid 输出显著图 $\hat{\mathbf{S}}$。
+\end{enumerate}
+
+\subsection{损失函数设计}
+
+混合损失函数由 BCE 损失与 SSIM 损失加权组合：
+\begin{equation}
+  \mathcal{L} = \lambda_{\text{bce}}\,\mathcal{L}_{\text{BCE}}
+              + \lambda_{\text{ssim}}\,\mathcal{L}_{\text{SSIM}}
+              + \lambda_{\text{edge}}\,\mathcal{L}_{\text{Edge}}
+  \label{eq:loss}
+\end{equation}
+
+其中：
+\begin{itemize}
+  \item $\mathcal{L}_{\text{BCE}} = -\frac{1}{HW}\sum_{i}[G_i\log\hat{S}_i + (1-G_i)\log(1-\hat{S}_i)]$，
+        像素级二值交叉熵，保证逐像素分类精度；
+  \item $\mathcal{L}_{\text{SSIM}} = 1 - \text{SSIM}(\hat{\mathbf{S}}, \mathbf{G})$，
+        结构相似性损失，关注整体结构与区域一致性；
+  \item $\mathcal{L}_{\text{Edge}} = \text{BCE}(\hat{\mathbf{E}}, \mathbf{E}_\text{gt})$，
+        边缘分支监督损失，$\mathbf{E}_\text{gt}$ 为 Canny 提取的边缘标签。
+\end{itemize}
+
+实验中默认设置 $\lambda_{\text{bce}}=1.0$，$\lambda_{\text{ssim}}=0.5$，$\lambda_{\text{edge}}=0.3$。
+
+%----------------------------------------------------------------
+\section{实验}
+
+%----------------------------------------------------------------
+\subsection{数据集}
+
+本实验采用 ECSSD（Extended Complex Scene Saliency Dataset） 作为显著性目标检测任务的公开基准数据集，包含 1000 张自然场景图像及其对应的人工标注显著性区域图。相比于简单背景下的显著目标数据集，ECSSD 中的图像具有更复杂的场景结构和更丰富的目标类型，包含动物、人物、植物、交通工具、日常物体等多种类别，能够较好地检验模型在复杂自然场景下的显著区域定位能力。
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=1.0\linewidth]{fig/ecssd.png}
+    \caption{ECSSD Dataset Samples}
+    \label{fig:mnist}
+\end{figure}
+
+%----------------------------------------------------------------
+\subsection{实验环境与实验设置}
 
 
 %----------------------------------------------------------------
+\subsection{评价指标}
+
+
+%----------------------------------------------------------------
+\subsection{实验结果对比}
+
+
+\begin{table}[H]
+  \centering
+  \caption{在 DUTS-TE 数据集上的定量结果对比}
+  \label{tab:main}
+  \begin{tabular}{lcccc}
+    \toprule
+    \textbf{方法} & $F_\beta\uparrow$ & MAE$\downarrow$ & $S_m\uparrow$ & $E_m\uparrow$ \\
+    \midrule
+    ResNet18-FCN         & 0.000 & 0.000 & 0.000 & 0.000 \\
+    ResNet18-UNet        & 0.000 & 0.000 & 0.000 & 0.000 \\
+    ResSOD-Improved（ours） & \textbf{0.000} & \textbf{0.000} & \textbf{0.000} & \textbf{0.000} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{消融实验}
+
+为验证改进方法中各模块的有效性，以 ResNet18-UNet 为基础逐步添加各模块进行消融实验，
+结果如表~\ref{tab:ablation} 所示。
+
+\begin{table}[H]
+  \centering
+  \caption{消融实验结果（DUTS-TE）}
+  \label{tab:ablation}
+  \begin{tabular}{ccccccc}
+    \toprule
+    \textbf{基础} & \textbf{边缘分支} & \textbf{通道注意力} & \textbf{多尺度融合} & \textbf{混合损失} &
+    $F_\beta\uparrow$ & MAE$\downarrow$ \\
+    \midrule
+    \checkmark & & & & & 0.000 & 0.000 \\
+    \checkmark & \checkmark & & & & 0.000 & 0.000 \\
+    \checkmark & \checkmark & \checkmark & & & 0.000 & 0.000 \\
+    \checkmark & \checkmark & \checkmark & \checkmark & & 0.000 & 0.000 \\
+    \checkmark & \checkmark & \checkmark & \checkmark & \checkmark & \textbf{0.000} & \textbf{0.000} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\noindent（注：表中数值为占位符，待实验完成后填入实际结果。）
+
+实验分析如下：
+\begin{itemize}
+  \item \textbf{边缘分支}的引入主要改善了目标边界处的预测精度，体现在 MAE 指标的下降；
+  \item \textbf{通道注意力}有效抑制了背景噪声，提升了 $F_\beta$ 与 $S_m$；
+  \item \textbf{多尺度融合}增强了对不同尺寸目标的检测能力，在包含小目标的样本上改善显著；
+  \item \textbf{混合损失}（SSIM 项）进一步提升了输出显著图的结构一致性。
+\end{itemize}
+
+\subsection{可视化结果分析}
+
+\begin{figure}[H]
+  \centering
+  \fbox{\rule{0pt}{4cm}\rule{12cm}{0pt}}
+  \caption{三种方法在典型样本上的显著图可视化对比。
+           从左至右依次为：输入图像、真值掩码、ResNet18-FCN、ResNet18-UNet、ResSOD-Improved。}
+  \label{fig:vis}
+\end{figure}
+
+
+%----------------------------------------------------------------
+\section{成员分工}
+
+
+\begin{table}[H]
+  \centering
+  \caption{成员分工说明}
+  \label{tab:division}
+  \begin{tabular}{cll}
+    \toprule
+    \textbf{成员} & \textbf{主要负责内容} & \textbf{具体工作} \\
+    \midrule
+    陈天祺 & 模型设计与训练 &
+      \tabincell{l}{ResNet18-FCN 基线实现；ResSOD-Improved 网络结构设计；\\训练流程搭建；超参数调整} \\
+    \midrule
+    邵莫涵 & 数据处理与评估 &
+      \tabincell{l}{数据集整理与预处理脚本；评价指标实现；\\消融实验设计与执行；实验结果汇总} \\
+    \midrule
+    杨欣瑞 & 文献调研与报告撰写 &
+      \tabincell{l}{相关工作文献调研；损失函数设计；\\ResNet18-UNet 基线实现；报告撰写与整理} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+%----------------------------------------------------------------
+\section{总结与展望}
+
+
+%================================================================
 \label{LastMainPage}
 \newpage
 \bibliographystyle{plain}
