@@ -85,7 +85,6 @@ class ECSSDDataset(Dataset):
         return {
             "image": image,
             "mask": mask,
-            "name": image_path.name,
         }
 
 def build_ecssd_dataloader(
