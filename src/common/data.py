@@ -1,55 +1,33 @@
 import os
 import numpy as np
 from pathlib import Path
-from typing import Tuple, Optional, List
 
 import torch
-from torch.utils.data import Dataset, DataLoader, random_split
+from torch.utils.data import Dataset, DataLoader, random_split, Subset
 from torchvision import transforms
+from torchvision.transforms import functional as TF
+from torchvision.transforms import InterpolationMode
 
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 from collections import defaultdict, Counter
 import matplotlib.pyplot as plt
 
-class ECSSDDataset(Dataset):
-    def __init__(self, image_dir, mask_dir):
+class SaliencyDataset(Dataset):
+    def __init__(self, image_dir, mask_dir, transform=None):
         self.image_dir = Path(image_dir)
         self.mask_dir = Path(mask_dir)
-
-        if not self.image_dir.exists():
-            raise FileNotFoundError(f"Image directory not found: {self.image_dir}")
-        if not self.mask_dir.exists():
-            raise FileNotFoundError(f"Mask directory not found: {self.mask_dir}")
+        self.transform = transform
 
         # 遍历读取图片路径
         self.image_paths = self._collect_images(self.image_dir)
         # 匹配 image 和 mask
         self.mask_paths = self._match_masks(self.image_paths, self.mask_dir)
 
-        # 定义转换器
-        self.image_transform = transforms.Compose([
-            transforms.Resize((224, 224)),
-            transforms.ToTensor(),
-            transforms.Normalize(
-                mean=[0.485, 0.456, 0.406],
-                std=[0.229, 0.224, 0.225],
-            )
-        ])
-
-        self.mask_transform = transforms.Compose([
-            transforms.Resize((224, 224), interpolation=transforms.InterpolationMode.NEAREST),
-            transforms.ToTensor(),
-        ])
-
     def _collect_images(self, image_dir):
         image_paths = sorted([p for p in image_dir.iterdir()])      # 保证数据读取顺序稳定、可复现
-
-        if len(image_paths) == 0:
-            raise RuntimeError(f"No images found in {image_dir}")
-
         return image_paths
 
-    def _match_masks(self, image_paths: List[Path], mask_dir: Path) -> List[Path]:
+    def _match_masks(self, image_paths, mask_dir):
         mask_paths = []
 
         for img_path in image_paths:
@@ -79,49 +57,128 @@ class ECSSDDataset(Dataset):
         image = Image.open(image_path).convert("RGB")
         mask = Image.open(mask_path).convert("L")
 
-        image = self.image_transform(image)
-        mask = self.mask_transform(mask)
+        if self.transform is not None:
+            image, mask = self.transform(image, mask)
 
-        return {
+        sample = {
             "image": image,
             "mask": mask,
         }
 
-def build_ecssd_dataloader(
+        return sample
+    
+class JointTransform:
+    def __init__(self, train=True, resize_size=256, crop_size=224):
+        self.train = train
+        self.resize_size = resize_size
+        self.crop_size = crop_size
+
+    def __call__(self, image, mask):
+        if self.train:
+            # 缩放到 2256×256
+            image = TF.resize(
+                image,
+                (self.resize_size, self.resize_size),
+                interpolation=InterpolationMode.BILINEAR
+            )
+            mask = TF.resize(
+                mask,
+                (self.resize_size, self.resize_size),
+                interpolation=InterpolationMode.NEAREST
+            )
+
+            # 随机裁剪到 224×224
+            i, j, h, w = transforms.RandomCrop.get_params(
+                image,
+                output_size=(self.crop_size, self.crop_size)
+            )
+
+            image = TF.crop(image, i, j, h, w)
+            mask = TF.crop(mask, i, j, h, w)
+
+            # 随机水平翻转
+            if torch.rand(1).item() < 0.5:
+                image = TF.hflip(image)
+                mask = TF.hflip(mask)
+
+        else:
+            # 验证/测试阶段不随机裁剪
+            image = TF.resize(
+                image,
+                (self.crop_size, self.crop_size),
+                interpolation=InterpolationMode.BILINEAR
+            )
+            mask = TF.resize(
+                mask,
+                (self.crop_size, self.crop_size),
+                interpolation=InterpolationMode.NEAREST
+            )
+
+        image = TF.to_tensor(image)
+        mask = TF.to_tensor(mask)
+
+        mask = (mask > 0.5).float()
+
+        image = TF.normalize(
+            image,
+            mean=[0.485, 0.456, 0.406],
+            std=[0.229, 0.224, 0.225]
+        )
+
+        return image, mask
+
+def build_saliency_dataloader(
     root_dir,
     image_folder="images",
     mask_folder="masks",
     val_ratio=0.3,
     batch_size=32,
     num_workers=4,
-    shuffle=True,
     seed=42
 ):
+
     image_dir = os.path.join(root_dir, image_folder)
     mask_dir = os.path.join(root_dir, mask_folder)
 
-    dataset = ECSSDDataset(
+    base_dataset = SaliencyDataset(
         image_dir=image_dir,
-        mask_dir=mask_dir
+        mask_dir=mask_dir,
+        transform=None
     )
-
-    val_size = int(len(dataset) * val_ratio)
-    train_size = len(dataset) - val_size
-
-    generator = torch.Generator().manual_seed(seed)
-    train_dataset, val_dataset = random_split(
-        dataset,
-        [train_size, val_size],
-        generator=generator,
-    )
-
-    dataloader = DataLoader(
-        dataset,
+    base_loader = DataLoader(
+        base_dataset,
         batch_size=batch_size,
-        shuffle=shuffle,
+        shuffle=True,
         num_workers=num_workers,
         pin_memory=True,
     )
+
+    # 划分数据集
+    val_size = int(len(base_dataset) * val_ratio)
+    train_size = len(base_dataset) - val_size
+
+    generator = torch.Generator().manual_seed(seed)
+    train_subset, val_subset = random_split(
+        base_dataset,
+        [train_size, val_size],
+        generator=generator
+    )
+
+    # 分别创建 Dataset & DataLoader
+    train_dataset = SaliencyDataset(
+        image_dir=image_dir,
+        mask_dir=mask_dir,
+        transform=JointTransform(train=True, resize_size=256, crop_size=224)
+    )
+
+    val_dataset = SaliencyDataset(
+        image_dir=image_dir,
+        mask_dir=mask_dir,
+        transform=JointTransform(train=False, resize_size=256, crop_size=224)
+    )
+
+    train_dataset = torch.utils.data.Subset(train_dataset, train_subset.indices)
+    val_dataset = torch.utils.data.Subset(val_dataset, val_subset.indices)
 
     train_loader = DataLoader(
         train_dataset,
@@ -139,9 +196,123 @@ def build_ecssd_dataloader(
         pin_memory=True,
     )
 
-    return dataset, dataloader, train_dataset, train_loader, val_dataset, val_loader
+def check_saliency_dataset(image_dir, mask_dir, mask_suffix=".png", max_print=20):
+    """ 数据完整性检查 """
 
-def show_samples_by_size(dataset, top_k_sizes=4, samples_per_size=6, cell_width=220):
+    image_dir = Path(image_dir)
+    mask_dir = Path(mask_dir)
+
+    image_paths = sorted([p for p in image_dir.iterdir() if p.is_file()])
+
+    bad_images = []
+    missing_masks = []
+    bad_masks = []
+    size_mismatch = []
+
+    image_sizes = []
+    mask_sizes = []
+    image_exts = Counter()
+
+    for img_path in image_paths:
+        image_exts[img_path.suffix.lower()] += 1
+        mask_path = mask_dir / f"{img_path.stem}{mask_suffix}"
+
+        # 检查 image
+        try:
+            with Image.open(img_path) as img:
+                img.verify()
+
+            with Image.open(img_path) as img:
+                img_size = img.size
+
+        except (UnidentifiedImageError, OSError, SyntaxError) as e:
+            bad_images.append((img_path, str(e)))
+            continue
+
+        # 检查 mask 是否存在
+        if not mask_path.exists():
+            missing_masks.append(mask_path)
+            continue
+
+        # 检查 mask
+        try:
+            with Image.open(mask_path) as m:
+                m.verify()
+
+            with Image.open(mask_path) as m:
+                mask_size = m.size
+
+        except (UnidentifiedImageError, OSError, SyntaxError) as e:
+            bad_masks.append((mask_path, str(e)))
+            continue
+
+        image_sizes.append(img_size)
+        mask_sizes.append(mask_size)
+
+        # 检查尺寸是否一致
+        if img_size != mask_size:
+            size_mismatch.append((img_path, mask_path, img_size, mask_size))
+
+    print()
+    print("=" * 60)
+    print("Dataset Check Result")
+    print("=" * 60)
+
+    print(f"Image dir        : {image_dir}")
+    print(f"Mask dir         : {mask_dir}")
+    print(f"Total images     : {len(image_paths)}")
+    print(f"Valid pairs      : {len(image_sizes)}")
+    print(f"Bad images       : {len(bad_images)}")
+    print(f"Missing masks    : {len(missing_masks)}")
+    print(f"Bad masks        : {len(bad_masks)}")
+    print(f"Size mismatches  : {len(size_mismatch)}")
+
+    print("\nImage extensions:")
+    for ext, count in image_exts.items():
+        print(f"  {ext}: {count}")
+
+    print("\nTop image sizes:")
+    for size, count in Counter(image_sizes).most_common(10):
+        print(f"  {size}: {count}")
+
+    def print_examples(title, items):
+        if len(items) == 0:
+            return
+
+        print(f"\n[{title}]")
+        for item in items[:max_print]:
+            print(" ", item)
+
+        if len(items) > max_print:
+            print(f"  ... and {len(items) - max_print} more")
+
+    print_examples("Bad images", bad_images)
+    print_examples("Missing masks", missing_masks)
+    print_examples("Bad masks", bad_masks)
+    print_examples("Size mismatches", size_mismatch)
+
+    print("=" * 60)
+    print()
+
+    return {
+        "total_images": len(image_paths),
+        "valid_pairs": len(image_sizes),
+        "bad_images": bad_images,
+        "missing_masks": missing_masks,
+        "bad_masks": bad_masks,
+        "size_mismatch": size_mismatch,
+        "image_size_counter": Counter(image_sizes),
+        "image_ext_counter": image_exts,
+    }
+
+def show_samples_by_size(
+    dataset,
+    top_k_sizes=4,
+    samples_per_size=6,
+    cell_width=220,
+    col_gap=8,
+    row_gap=8,
+):
     """ 按尺寸分组展示样本 """
 
     size_to_indices = defaultdict(list)
@@ -184,29 +355,33 @@ def show_samples_by_size(dataset, top_k_sizes=4, samples_per_size=6, cell_width=
             image_blocks.append(image)
             mask_blocks.append(mask)
 
-        row_w = cell_width * len(image_blocks)
-        row_h = max(img.height for img in image_blocks)
+        rows.append(image_blocks)
+        rows.append(mask_blocks)
 
-        image_row = Image.new("RGB", (row_w, row_h), "white")
-        mask_row = Image.new("RGB", (row_w, row_h), "white")
+    # 每一行的高度
+    row_heights = [
+        max(img.height for img in row)
+        for row in rows
+    ]
 
-        for j, (img, mask) in enumerate(zip(image_blocks, mask_blocks)):
-            x = j * cell_width
-            image_row.paste(img, (x, 0))
-            mask_row.paste(mask, (x, 0))
+    # 总宽度
+    max_cols = max(len(row) for row in rows)
+    total_w = max_cols * cell_width + (max_cols - 1) * col_gap
 
-        rows.append((image_row, f"Images - size {size}"))
-        rows.append((mask_row, f"Masks  - size {size}"))
-
-    total_w = max(row.width for row, _ in rows)
-    total_h = sum(row.height for row, _ in rows)
+    # 总高度
+    total_h = sum(row_heights) + (len(rows) - 1) * row_gap
 
     canvas = Image.new("RGB", (total_w, total_h), "white")
 
     y = 0
-    for row, _ in rows:
-        canvas.paste(row, (0, y))
-        y += row.height
+    for row, row_h in zip(rows, row_heights):
+        x = 0
+
+        for img in row:
+            canvas.paste(img, (x, y))
+            x += cell_width + col_gap
+
+        y += row_h + row_gap
 
     plt.figure(figsize=(total_w / 100, total_h / 100))
     plt.imshow(np.array(canvas))
@@ -215,22 +390,26 @@ def show_samples_by_size(dataset, top_k_sizes=4, samples_per_size=6, cell_width=
     plt.show()
 
 if __name__ == "__main__":
-    root_dir = "./data/ECSSD"
+    dataset_name = "ECSSD"
+    root_dir = f"./data/{dataset_name}"
 
-    dataset, dataloader, _, _, _, _ = build_ecssd_dataloader(
+    dataset, _, train_loader, _, _ = build_saliency_dataloader(
         root_dir=root_dir,
         image_folder="images",
         mask_folder="masks",
         batch_size=32,
-        num_workers=0,
-        shuffle=True,
+        num_workers=0
     )
 
-    print(f"Dataset size: {len(dataset)}")
+    print(f"[{dataset_name}]Dataset size: {len(dataset)}")
 
-    batch = next(iter(dataloader))
-    print("Image batch shape:", batch["image"].shape)
-    print("Mask batch shape :", batch["mask"].shape)
+    batch = next(iter(train_loader))
+
+    check_result = check_saliency_dataset(
+        image_dir=f"{root_dir}/images",
+        mask_dir=f"{root_dir}/masks",
+        mask_suffix=".png"
+    )
 
     show_samples_by_size(
         dataset,

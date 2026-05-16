@@ -25,7 +25,7 @@ plt.rcParams.update({
     # =====================================================
     # Font
     # =====================================================
-    "font.family": "Carlito",
+    "font.family": "Liberation Serif",
     "font.size": 14,
 
     # Axis title / label
@@ -117,6 +117,11 @@ plt.rcParams.update({
 
 def denormalize_image(image, mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]):
     image = image.detach().cpu().clone()
+
+    if mean is None:
+        mean = [0.485, 0.456, 0.406]
+    if std is None:
+        std = [0.229, 0.224, 0.225]
 
     mean = torch.tensor(mean).view(3, 1, 1)
     std = torch.tensor(std).view(3, 1, 1)
@@ -211,7 +216,9 @@ def visualize_predictions(
 
     with torch.no_grad():
         outputs = model(images)
-        preds = torch.sigmoid(outputs)
+
+        preds = outputs[0] if isinstance(outputs, (tuple, list)) else outputs
+        preds = torch.sigmoid(preds)
         preds = (preds >= threshold).float()
 
     fig, axes = plt.subplots(
@@ -247,6 +254,7 @@ def visualize_predictions(
     if save_path is not None:
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         plt.savefig(save_path, dpi=300, bbox_inches="tight")
+        print("✅ Fig:predictions saved")
 
     plt.show()
 
@@ -274,7 +282,9 @@ def visualize_predictions_with_error(
 
     with torch.no_grad():
         outputs = model(images)
-        preds = torch.sigmoid(outputs)
+
+        preds = outputs[0] if isinstance(outputs, (tuple, list)) else outputs
+        preds = torch.sigmoid(preds)
         preds = (preds >= threshold).float()
 
     fig, axes = plt.subplots(
@@ -316,5 +326,6 @@ def visualize_predictions_with_error(
     if save_path is not None:
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         plt.savefig(save_path, dpi=300, bbox_inches="tight")
+        print("✅ Fig:predictions_with_error saved")
 
     plt.show()

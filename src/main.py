@@ -5,9 +5,9 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from model import ResNet18_UNet
+from model import PoolNet
 from common import (
-    build_ecssd_dataloader,
+    build_saliency_dataloader,
     Trainer,
     plot_training_curves,
     visualize_predictions,
@@ -19,7 +19,7 @@ if __name__ == "__main__":
     # 超参数
     # =========================
     hparams = {
-        "root_dir": "./data/ECSSD",
+        "root_dir": "./autodl-tmp/data/ECSSD",
         "image_folder": "images",
         "mask_folder": "masks",
 
@@ -27,11 +27,11 @@ if __name__ == "__main__":
         "batch_size": 16,
         "num_workers": 0,
 
-        "epochs": 20,
+        "epochs": 25,
         "learning_rate": 1e-4,
 
         "device": "cuda" if torch.cuda.is_available() else "cpu",
-        "output_dir": "./outputs",
+        "output_dir": os.path.join(os.path.dirname(__file__), "../outputs"),
 
         "seed": 42,
     }
@@ -41,15 +41,14 @@ if __name__ == "__main__":
     # =========================
     # 数据准备
     # =========================
-    dataset, dataloader, train_dataset, train_loader, val_dataset, valid_loader = build_ecssd_dataloader(
+    dataset, train_dataset, train_loader, val_dataset, valid_loader = build_saliency_dataloader(
         root_dir=hparams["root_dir"],
         image_folder=hparams["image_folder"],
         mask_folder=hparams["mask_folder"],
         val_ratio=hparams["val_ratio"],
         batch_size=hparams["batch_size"],
         num_workers=hparams["num_workers"],
-        shuffle=True,
-        seed=42,
+        seed=hparams["seed"],
     )
 
     print(f"Dataset size: {len(dataset)}")
@@ -59,17 +58,19 @@ if __name__ == "__main__":
     # =========================
     # 实例化模型
     # =========================
-    model = ResNet18_UNet().to(hparams["device"])
+    model = PoolNet().to(hparams["device"])
 
     # =========================
     # 损失函数与优化器
     # =========================
     criterion = nn.BCEWithLogitsLoss()
 
-    optimizer = torch.optim.Adam(
-        model.parameters(),
-        lr=hparams["learning_rate"]
-    )
+    optimizer = torch.optim.AdamW([
+        {"params": model.base.resnet.parameters(), "lr": 1e-5},
+        {"params": model.convert.parameters(), "lr": 1e-4},
+        {"params": model.deep_pool.parameters(), "lr": 1e-4},
+        {"params": model.score.parameters(), "lr": 1e-4},
+    ], weight_decay=1e-4)
 
     # =========================
     # 创建训练器
@@ -82,6 +83,7 @@ if __name__ == "__main__":
         valid_loader=valid_loader,
         device=hparams["device"],
         output_dir=hparams["output_dir"],
+        threshold=0.5
     )
 
     # =========================

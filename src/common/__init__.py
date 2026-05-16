@@ -1,14 +1,15 @@
-from .data import ECSSDDataset, build_ecssd_dataloader
+from .data import build_saliency_dataloader
 from .train import Trainer
 from .visualization import (
     plot_training_curves,
     visualize_predictions,
     visualize_predictions_with_error,
 )
+from .eval import Evaluator
 
 __all__ = [
     # ----------- 数据 -----------
-    "build_ecssd_dataloader",
+    "build_saliency_dataloader",
 
     # ----------- 训练 -----------
     "Trainer",
@@ -19,4 +20,5 @@ __all__ = [
     "visualize_predictions_with_error",
 
     # ----------- 评估 -----------
+    "Evaluator",
 ]
