@@ -5,7 +5,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from model import PoolNet
+from model import F3Net
 from common import (
     build_saliency_dataloader,
     Trainer,
@@ -19,7 +19,7 @@ if __name__ == "__main__":
     # 超参数
     # =========================
     hparams = {
-        "root_dir": "./autodl-tmp/data/ECSSD",
+        "root_dir": "../data/ECSSD",
         "image_folder": "images",
         "mask_folder": "masks",
 
@@ -58,18 +58,19 @@ if __name__ == "__main__":
     # =========================
     # 实例化模型
     # =========================
-    model = PoolNet().to(hparams["device"])
+    model = F3Net().to(hparams["device"])
 
     # =========================
     # 损失函数与优化器
     # =========================
     criterion = nn.BCEWithLogitsLoss()
 
+    backbone_ids = {id(p) for p in model.backbone.parameters()}
+    other_params = [p for p in model.parameters() if id(p) not in backbone_ids]
+
     optimizer = torch.optim.AdamW([
-        {"params": model.base.resnet.parameters(), "lr": 1e-5},
-        {"params": model.convert.parameters(), "lr": 1e-4},
-        {"params": model.deep_pool.parameters(), "lr": 1e-4},
-        {"params": model.score.parameters(), "lr": 1e-4},
+        {"params": model.backbone.parameters(), "lr": 1e-5},
+        {"params": other_params,                "lr": 1e-4},
     ], weight_decay=1e-4)
 
     # =========================
