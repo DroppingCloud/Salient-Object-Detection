@@ -10,7 +10,7 @@ import numpy as np
 import sys
 from .data import SaliencyDataset, JointTransform
 from .visualization import visualize_predictions, visualize_predictions_with_error
-from model import PoolNet
+from model.cpd import CPDResNet
 
 class Evaluator:
     def __init__(
@@ -278,13 +278,13 @@ if __name__ == "__main__":
     print(f"Using device: {device}")
 
     # 加载模型
-    model = PoolNet().to(device)
+    model = CPDResNet(pretrained=False).to(device)
     ckpt_path = os.path.join(os.path.dirname(__file__), f"../../outputs/{model.__class__.__name__}/best_model.pth")
     ckpt = torch.load(ckpt_path, map_location=device)
     model.load_state_dict(ckpt["model_state_dict"])
 
     # 构建 Evaluator
-    test_dir = os.path.join(os.path.dirname(__file__), "../test")
+    test_dir = os.path.join(os.path.dirname(__file__), "../../data/test")
     evaluator = Evaluator(
         model=model,
         test_dir=test_dir,
