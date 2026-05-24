@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 
 import torch
@@ -7,10 +8,15 @@ from torch.utils.data import DataLoader
 from scipy.ndimage import distance_transform_edt
 import numpy as np
 
-import sys
-from .data import SaliencyDataset, JointTransform
-from .visualization import visualize_predictions, visualize_predictions_with_error
-from model.cpd import CPDResNet
+from model import F3Net, PoolNet, CPDResNet
+from common import (
+    build_saliency_dataloader,
+    Trainer,
+    plot_training_curves,
+    visualize_predictions,
+    visualize_predictions_with_error,
+)
+from common.data import JointTransform, SaliencyDataset
 
 class Evaluator:
     def __init__(
@@ -278,18 +284,18 @@ if __name__ == "__main__":
     print(f"Using device: {device}")
 
     # 加载模型
-    model = CPDResNet(pretrained=False).to(device)
-    ckpt_path = os.path.join(os.path.dirname(__file__), f"../../outputs/{model.__class__.__name__}/best_model.pth")
+    model = F3Net().to(device)
+    ckpt_path = os.path.join(os.path.dirname(__file__), f"../outputs/{model.__class__.__name__}/best_model.pth")
     ckpt = torch.load(ckpt_path, map_location=device)
     model.load_state_dict(ckpt["model_state_dict"])
 
     # 构建 Evaluator
-    test_dir = os.path.join(os.path.dirname(__file__), "../../data/test")
+    test_dir = os.path.join(os.path.dirname(__file__), "../data/test")
     evaluator = Evaluator(
         model=model,
         test_dir=test_dir,
         device=device,
-        output_dir=os.path.join(os.path.dirname(__file__), f"../../outputs"),
+        output_dir=os.path.join(os.path.dirname(__file__), f"../outputs"),
         threshold=0.5,
         batch_size=8,
         num_workers=0,

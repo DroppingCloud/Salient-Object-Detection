@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .resnet18 import ResNet18Pre
+from .resnet18 import ResNet18, ResNet18Pre
 
 
 def _cbr(in_ch, out_ch, k=3, p=1):
@@ -85,9 +85,9 @@ class F3Net(nn.Module):
     weight 2.0 to out_main and 1.0 to out_aux.
     """
 
-    def __init__(self, mid_ch=128):
+    def __init__(self, mid_ch=128, pretrained=True):
         super().__init__()
-        self.backbone = ResNet18Pre()
+        self.backbone = ResNet18Pre() if pretrained else ResNet18()
         # c1: 64ch H/4 | c2: 128ch H/8 | c3: 256ch H/16 | c4: 512ch H/32
 
         # ── Path 1: coarse top-down decoder ──────────────────────────────

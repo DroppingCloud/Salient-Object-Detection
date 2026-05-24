@@ -5,7 +5,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from model import F3Net
+from model import F3Net, PoolNet, CPDResNet
 from common import (
     build_saliency_dataloader,
     Trainer,

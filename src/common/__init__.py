@@ -5,7 +5,6 @@ from .visualization import (
     visualize_predictions,
     visualize_predictions_with_error,
 )
-from .eval import Evaluator
 
 __all__ = [
     # ----------- 数据 -----------
@@ -18,7 +17,4 @@ __all__ = [
     "plot_training_curves",
     "visualize_predictions",
     "visualize_predictions_with_error",
-
-    # ----------- 评估 -----------
-    "Evaluator",
 ]

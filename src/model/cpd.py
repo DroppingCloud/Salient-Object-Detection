@@ -1,10 +1,10 @@
 import copy
-import warnings
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchvision.models import ResNet50_Weights, resnet50
+
+from .resnet18 import ResNet18, ResNet18Pre
 
 
 class ConvBNReLU(nn.Module):
@@ -149,43 +149,24 @@ class HolisticAttention(nn.Module):
 class B2ResNet(nn.Module):
     def __init__(self, pretrained=True):
         super().__init__()
-        weights = ResNet50_Weights.IMAGENET1K_V2 if pretrained else None
+        base = ResNet18Pre() if pretrained else ResNet18()
 
-        try:
-            backbone = resnet50(weights=weights)
-        except Exception as exc:
-            warnings.warn(
-                f"Failed to load pretrained ResNet50 weights ({exc}). Falling back to random init.",
-                stacklevel=2,
-            )
-            backbone = resnet50(weights=None)
+        self.stem   = base.stem
+        self.layer1 = base.layer1   # 64ch
+        self.layer2 = base.layer2   # 128ch
 
-        self.conv1 = backbone.conv1
-        self.bn1 = backbone.bn1
-        self.relu = backbone.relu
-        self.maxpool = backbone.maxpool
-
-        self.layer1 = backbone.layer1
-        self.layer2 = backbone.layer2
-        self.layer3_1 = backbone.layer3
-        self.layer4_1 = backbone.layer4
-
-        self.layer3_2 = copy.deepcopy(backbone.layer3)
-        self.layer4_2 = copy.deepcopy(backbone.layer4)
+        self.layer3_1 = base.layer3                   # 256ch
+        self.layer4_1 = base.layer4                   # 512ch
+        self.layer3_2 = copy.deepcopy(base.layer3)
+        self.layer4_2 = copy.deepcopy(base.layer4)
 
     def forward(self, x):
-        x = self.relu(self.bn1(self.conv1(x)))
-        x = self.maxpool(x)
-
+        x  = self.stem(x)
         x1 = self.layer1(x)
         x2 = self.layer2(x1)
-
         x3_1 = self.layer3_1(x2)
         x4_1 = self.layer4_1(x3_1)
-
-        x3_2 = self.layer3_2(x2)
-        x4_2 = self.layer4_2(x3_2)
-        return x1, x2, x3_1, x4_1, x3_2, x4_2
+        return x1, x2, x3_1, x4_1
 
 
 class CPDResNet(nn.Module):
@@ -193,30 +174,24 @@ class CPDResNet(nn.Module):
         super().__init__()
         self.backbone = B2ResNet(pretrained=pretrained)
 
-        self.rfb2_1 = RFBModified(512, channel)
-        self.rfb3_1 = RFBModified(1024, channel)
-        self.rfb4_1 = RFBModified(2048, channel)
+        self.rfb2_1 = RFBModified(128,  channel)
+        self.rfb3_1 = RFBModified(256,  channel)
+        self.rfb4_1 = RFBModified(512,  channel)
         self.agg1 = Aggregation(channel)
 
         self.ha = HolisticAttention(kernel_size=32, sigma=4.0)
 
-        self.rfb2_2 = RFBModified(512, channel)
-        self.rfb3_2 = RFBModified(1024, channel)
-        self.rfb4_2 = RFBModified(2048, channel)
+        self.rfb2_2 = RFBModified(128,  channel)
+        self.rfb3_2 = RFBModified(256,  channel)
+        self.rfb4_2 = RFBModified(512,  channel)
         self.agg2 = Aggregation(channel)
 
         self._init_custom_weights()
 
     def _init_custom_weights(self):
         for module in [
-            self.rfb2_1,
-            self.rfb3_1,
-            self.rfb4_1,
-            self.agg1,
-            self.rfb2_2,
-            self.rfb3_2,
-            self.rfb4_2,
-            self.agg2,
+            self.rfb2_1, self.rfb3_1, self.rfb4_1, self.agg1,
+            self.rfb2_2, self.rfb3_2, self.rfb4_2, self.agg2,
         ]:
             for m in module.modules():
                 if isinstance(m, nn.Conv2d):
@@ -230,14 +205,7 @@ class CPDResNet(nn.Module):
     def forward(self, x):
         input_size = x.shape[2:]
 
-        x = self.backbone.relu(self.backbone.bn1(self.backbone.conv1(x)))
-        x = self.backbone.maxpool(x)
-
-        x1 = self.backbone.layer1(x)
-        x2 = self.backbone.layer2(x1)
-
-        x3_1 = self.backbone.layer3_1(x2)
-        x4_1 = self.backbone.layer4_1(x3_1)
+        x1, x2, x3_1, x4_1 = self.backbone(x)
 
         x2_rfb_1 = self.rfb2_1(x2)
         x3_rfb_1 = self.rfb3_1(x3_1)
@@ -245,27 +213,15 @@ class CPDResNet(nn.Module):
         attention_map = self.agg1(x4_rfb_1, x3_rfb_1, x2_rfb_1)
 
         x2_ha = self.ha(torch.sigmoid(attention_map), x2)
-        x3_2 = self.backbone.layer3_2(x2_ha)
-        x4_2 = self.backbone.layer4_2(x3_2)
+        x3_2  = self.backbone.layer3_2(x2_ha)
+        x4_2  = self.backbone.layer4_2(x3_2)
 
         x2_rfb_2 = self.rfb2_2(x2_ha)
         x3_rfb_2 = self.rfb3_2(x3_2)
         x4_rfb_2 = self.rfb4_2(x4_2)
         detection_map = self.agg2(x4_rfb_2, x3_rfb_2, x2_rfb_2)
 
-        detection_map = F.interpolate(
-            detection_map,
-            size=input_size,
-            mode="bilinear",
-            align_corners=True,
-        )
-        attention_map = F.interpolate(
-            attention_map,
-            size=input_size,
-            mode="bilinear",
-            align_corners=True,
-        )
+        detection_map = F.interpolate(detection_map, size=input_size, mode="bilinear", align_corners=True)
+        attention_map = F.interpolate(attention_map, size=input_size, mode="bilinear", align_corners=True)
 
-        # Keep the final detection map first so the current trainer/evaluator
-        # treats it as the primary prediction.
         return detection_map, attention_map

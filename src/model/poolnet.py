@@ -6,10 +6,10 @@ from .resnet18 import ResNet18, ResNet18Pre
 
 class ResNet18Locate(nn.Module):
     """ Backbone + PPM """
-    def __init__(self):
+    def __init__(self, pretrained=True):
         super().__init__()
         # 多尺度特征
-        self.resnet = ResNet18Pre()
+        self.backbone = ResNet18Pre() if pretrained else ResNet18()
 
         # PPM 金字塔池化
         self.in_planes = 256
@@ -40,7 +40,7 @@ class ResNet18Locate(nn.Module):
 
     def forward(self, x):
         # Backbone 多尺度特征
-        c1, c2, c3, c4 = self.resnet(x)               # [64, 128, 256, 512]
+        c1, c2, c3, c4 = self.backbone(x)               # [64, 128, 256, 512]
 
         # c4 特征压缩
         p = self.ppms_pre(c4)                         # (B, 256, H/32, W/32)
@@ -154,10 +154,11 @@ _DP_X2    = [True,  True,  True,  False]
 _DP_FUSE  = [True,  True,  True,  False]
 
 class PoolNet(nn.Module):
-    def __init__(self):
+    def __init__(self, pretrained=True):
         super().__init__()
         # Encoder 形成多尺度特征与全局上下文信息
-        self.base = ResNet18Locate()
+        self.base = ResNet18Locate(pretrained=pretrained)
+        self.backbone = self.base.backbone
 
         # [c1, c2, c3, c4] 通道调整
         self.convert = ConvertLayer(_IN_CH, _OUT_CH)
@@ -174,23 +175,9 @@ class PoolNet(nn.Module):
         self._init_weights()
 
     def _init_weights(self):
-        modules_to_init = [
-            self.base.ppms_pre,
-            self.base.ppms,
-            self.base.ppm_cat,
-            self.base.infos,
-            self.convert,
-            self.deep_pool,
-        ]
-
-        for module in modules_to_init:
-            for m in module.modules():
-                if isinstance(m, nn.Conv2d):
-                    nn.init.normal_(m.weight, mean=0.0, std=0.01)
-                    if m.bias is not None:
-                        nn.init.zeros_(m.bias)
-
-        for m in self.score.modules():
+        for name, m in self.named_modules():
+            if name.startswith('backbone') or name.startswith('base.backbone'):
+                continue
             if isinstance(m, nn.Conv2d):
                 nn.init.normal_(m.weight, mean=0.0, std=0.01)
                 if m.bias is not None:
