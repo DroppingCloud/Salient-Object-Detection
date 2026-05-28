@@ -197,8 +197,6 @@ def build_saliency_dataloader(
     )
     return base_dataset, train_dataset, train_loader, val_dataset, val_loader
 
-    return base_dataset, train_dataset, train_loader, val_dataset, val_loader
-
 def check_saliency_dataset(image_dir, mask_dir, mask_suffix=".png", max_print=20):
     """ 数据完整性检查 """
 
