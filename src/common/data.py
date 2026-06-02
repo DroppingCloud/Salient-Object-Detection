@@ -12,6 +12,13 @@ from PIL import Image, UnidentifiedImageError
 from collections import defaultdict, Counter
 import matplotlib.pyplot as plt
 
+from .config import (
+    RESIZE_SIZE, CROP_SIZE, FLIP_PROB, MASK_THRESH,
+    IMAGENET_MEAN, IMAGENET_STD,
+    VAL_RATIO, BATCH_SIZE, NUM_WORKERS, SEED,
+    DATA_ROOT, TEST_DIR
+)
+
 class SaliencyDataset(Dataset):
     def __init__(self, image_dir, mask_dir, transform=None):
         self.image_dir = Path(image_dir)
@@ -68,7 +75,7 @@ class SaliencyDataset(Dataset):
         return sample
     
 class JointTransform:
-    def __init__(self, train=True, resize_size=256, crop_size=224):
+    def __init__(self, train=True, resize_size=RESIZE_SIZE, crop_size=CROP_SIZE):
         self.train = train
         self.resize_size = resize_size
         self.crop_size = crop_size
@@ -97,7 +104,7 @@ class JointTransform:
             mask = TF.crop(mask, i, j, h, w)
 
             # 随机水平翻转
-            if torch.rand(1).item() < 0.5:
+            if torch.rand(1).item() < FLIP_PROB:
                 image = TF.hflip(image)
                 mask = TF.hflip(mask)
 
@@ -117,25 +124,37 @@ class JointTransform:
         image = TF.to_tensor(image)
         mask = TF.to_tensor(mask)
 
-        mask = (mask > 0.5).float()
+        mask = (mask > MASK_THRESH).float()
 
         image = TF.normalize(
             image,
-            mean=[0.485, 0.456, 0.406],
-            std=[0.229, 0.224, 0.225]
+            mean=IMAGENET_MEAN,
+            std=IMAGENET_STD,
         )
 
         return image, mask
 
 def build_saliency_dataloader(
     root_dir,
-    image_folder="images",
-    mask_folder="masks",
-    val_ratio=0.3,
-    batch_size=32,
-    num_workers=4,
-    seed=42
+    image_folder=None,
+    mask_folder=None,
+    val_ratio=None,
+    batch_size=None,
+    num_workers=None,
+    seed=None,
 ):
+    if image_folder is None:
+        from .config import IMAGE_FOLDER as image_folder
+    if mask_folder is None:
+        from .config import MASK_FOLDER as mask_folder
+    if val_ratio is None:
+        val_ratio = VAL_RATIO
+    if batch_size is None:
+        batch_size = BATCH_SIZE
+    if num_workers is None:
+        num_workers = NUM_WORKERS
+    if seed is None:
+        seed = SEED
 
     image_dir = os.path.join(root_dir, image_folder)
     mask_dir = os.path.join(root_dir, mask_folder)
@@ -390,11 +409,83 @@ def show_samples_by_size(
     plt.tight_layout(pad=0)
     plt.show()
 
-if __name__ == "__main__":
-    dataset_name = "ECSSD"
-    root_dir = f"./data/{dataset_name}"
+def save_val_subset(val_dataset, save_root, max_samples=None, prefix="val_"):
 
-    dataset, _, train_loader, _, _ = build_saliency_dataloader(
+    save_root = Path(save_root)
+    image_save_dir = save_root / "images"
+    mask_save_dir = save_root / "masks"
+
+    image_save_dir.mkdir(parents=True, exist_ok=True)
+    mask_save_dir.mkdir(parents=True, exist_ok=True)
+
+    # 获取真实 Dataset 和索引
+    if isinstance(val_dataset, torch.utils.data.Subset):
+        dataset = val_dataset.dataset
+        indices = list(val_dataset.indices)
+    else:
+        dataset = val_dataset
+        indices = list(range(len(dataset)))
+
+    if max_samples is not None:
+        indices = indices[:max_samples]
+
+    for count, idx in enumerate(indices, 1):
+        sample = dataset[idx]
+
+        image = sample["image"]
+        mask = sample["mask"]
+
+        # -------------------------
+        # image: tensor -> PIL RGB
+        # -------------------------
+        if isinstance(image, torch.Tensor):
+            image = image.detach().cpu()
+
+            # 如果 image 是经过 ImageNet normalize 的，需要反归一化
+            mean = torch.tensor(IMAGENET_MEAN).view(3, 1, 1)
+            std = torch.tensor(IMAGENET_STD).view(3, 1, 1)
+            image = image * std + mean
+
+            image = image.clamp(0, 1)
+            image = TF.to_pil_image(image)
+
+        image = image.convert("RGB")
+
+        # -------------------------
+        # mask: tensor -> PIL L, 0/255
+        # -------------------------
+        if isinstance(mask, torch.Tensor):
+            mask = mask.detach().cpu().squeeze()
+            mask = (mask > 0.5).numpy().astype(np.uint8) * 255
+            mask = Image.fromarray(mask, mode="L")
+        else:
+            mask = mask.convert("L")
+            mask = np.array(mask)
+            mask = (mask > 127).astype(np.uint8) * 255
+            mask = Image.fromarray(mask, mode="L")
+
+        # -------------------------
+        # 文件名：image 保存 jpg，mask 保存 png
+        # -------------------------
+        if hasattr(dataset, "image_paths"):
+            stem = Path(dataset.image_paths[idx]).stem
+        else:
+            stem = f"{prefix}{idx}"
+
+        image_name = f"{stem}.jpg"
+        mask_name = f"{stem}.png"
+
+        image.save(image_save_dir / image_name, quality=95)
+        mask.save(mask_save_dir / mask_name)
+
+    print(f"Saved {len(indices)} samples to:")
+    print(f"  Images: {image_save_dir}")
+    print(f"  Masks : {mask_save_dir}")
+
+if __name__ == "__main__":
+    root_dir = DATA_ROOT
+
+    dataset, _, train_loader, val_dataset, _ = build_saliency_dataloader(
         root_dir=root_dir,
         image_folder="images",
         mask_folder="masks",
@@ -402,7 +493,7 @@ if __name__ == "__main__":
         num_workers=0
     )
 
-    print(f"[{dataset_name}]Dataset size: {len(dataset)}")
+    print(f"Dataset size: {len(dataset)}")
 
     batch = next(iter(train_loader))
 
@@ -418,3 +509,5 @@ if __name__ == "__main__":
         samples_per_size=6,
         cell_width=220,
     )
+
+    save_val_subset(val_dataset, save_root=TEST_DIR, max_samples=None)

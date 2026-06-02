@@ -5,6 +5,7 @@ from .visualization import (
     visualize_predictions,
     visualize_predictions_with_error,
 )
+from . import config
 
 __all__ = [
     # ----------- 数据 -----------
@@ -17,4 +18,7 @@ __all__ = [
     "plot_training_curves",
     "visualize_predictions",
     "visualize_predictions_with_error",
+
+    # ----------- 配置 -----------
+    "config",
 ]

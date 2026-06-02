@@ -144,11 +144,11 @@ def plot_training_curves(
     train_losses,
     val_losses,
     val_maes=None,
-    val_fmeasures=None,
+    val_maxfs=None,
     title_prefix="",
     save_path=None
 ):
-    """ 绘制训练 Loss 曲线、MAE 曲线、F-measure 曲线"""
+    """ 绘制训练 Loss 曲线、MAE 曲线、MaxF 曲线"""
     epochs = range(1, len(train_losses) + 1)
 
     fig, axes = plt.subplots(1, 3, figsize=(18, 5))
@@ -172,12 +172,12 @@ def plot_training_curves(
     axes[1].grid(True, linestyle="--", alpha=0.5)
     axes[1].legend()
 
-    # F-measure 曲线
-    axes[2].plot(epochs, val_fmeasures, "o-", label="Val F-measure", color=TOP_PAPER_COLORS[3])
+    # MaxF 曲线
+    axes[2].plot(epochs, val_maxfs, "o-", label="Val MaxF", color=TOP_PAPER_COLORS[3])
 
-    axes[2].set_title("F-measure Curve")
+    axes[2].set_title("MaxF Curve")
     axes[2].set_xlabel("Epoch")
-    axes[2].set_ylabel("F-measure")
+    axes[2].set_ylabel("MaxF")
     axes[2].grid(True, linestyle="--", alpha=0.5)
     axes[2].legend()
 

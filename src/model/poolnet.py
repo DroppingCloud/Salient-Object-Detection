@@ -4,6 +4,19 @@ import torch.nn.functional as F
 
 from .resnet18 import ResNet18, ResNet18Pre
 
+# ─────────────────────────────────────────────
+# 配置
+# ─────────────────────────────────────────────
+# Convert Layer 
+_IN_CH  = [64, 128, 256, 512]       # [c1, c2, c3, c4]
+_OUT_CH = [128, 256, 256, 256]  
+
+# deep_pool 配置
+_DP_IN    = [256, 256, 256, 128]
+_DP_OUT   = [256, 256, 128, 128]
+_DP_X2    = [True,  True,  True,  False]
+_DP_FUSE  = [True,  True,  True,  False]
+
 class ResNet18Locate(nn.Module):
     """ Backbone + PPM """
     def __init__(self, pretrained=True):
@@ -139,19 +152,6 @@ class ScoreLayer(nn.Module):
         if target_size is not None:
             x = F.interpolate(x, target_size[2:], mode='bilinear', align_corners=True)
         return x
-
-# ─────────────────────────────────────────────
-# 配置
-# ─────────────────────────────────────────────
-# Convert Layer 
-_IN_CH  = [64, 128, 256, 512]       # [c1, c2, c3, c4]
-_OUT_CH = [128, 256, 256, 256]  
-
-# deep_pool 配置
-_DP_IN    = [256, 256, 256, 128]
-_DP_OUT   = [256, 256, 128, 128]
-_DP_X2    = [True,  True,  True,  False]
-_DP_FUSE  = [True,  True,  True,  False]
 
 class PoolNet(nn.Module):
     def __init__(self, pretrained=True):

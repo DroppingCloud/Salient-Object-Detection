@@ -4,8 +4,16 @@ from tqdm import tqdm
 
 import torch
 
+import numpy as np
+from py_sod_metrics import MAE, Fmeasure, Emeasure, Smeasure, WeightedFmeasure
+
+from .config import (
+    THRESHOLD, EPS,
+    MAIN_LOSS_WEIGHT, AUX_LOSS_WEIGHT, LR_ETA_MIN,
+)
+
 class Trainer:
-    def __init__(self, model, optimizer, criterion, train_loader, valid_loader, device, output_dir="./outputs", threshold=0.5):
+    def __init__(self, model, optimizer, criterion, train_loader, valid_loader, device, output_dir="./outputs", threshold=THRESHOLD):
         self.model = model
         self.optimizer = optimizer
         self.criterion = criterion
@@ -20,72 +28,31 @@ class Trainer:
         os.makedirs(self.output_dir, exist_ok=True)
 
         self.best_mae = float("inf")
-        self.best_fmeasure = 0.0
+        self.best_maxf = 0.0
+        self.best_smeasure = 0.0
+        self.best_wfm = 0.0
 
-        self.train_losses = []
-        self.val_losses = []
         self.val_maes = []
-        self.val_fmeasures = []
-        self.val_emeasures = []
+        self.val_maxfs = []
+        self.val_meanfs = []
+        self.val_adpfs = []
+        self.val_wfms = []
+        self.val_maxes = []
+        self.val_meanes = []
+        self.val_adpes = []
+        self.val_smeasures = []
 
         # 二值化阈值
         self.threshold = threshold
 
-    def _compute_mae(self, pred, mask):
-        """ 计算 MAE """
-        return torch.mean(torch.abs(pred - mask)).item()
+        # 深监督 warm-up 比例
+        self.ds_warmup_ratio = 0.4
 
-    def _compute_fmeasure(self, pred, mask, beta2=0.3):
-        """ 计算 F-measure（per-image 平均）"""
-        pred_binary = (pred >= self.threshold).float()
-        mask_binary = (mask >= 0.5).float()
-
-        scores = []
-        for p, g in zip(pred_binary, mask_binary):
-            tp = (p * g).sum()
-            precision = tp / (p.sum() + 1e-8)
-            recall = tp / (g.sum() + 1e-8)
-            fm = (1 + beta2) * precision * recall / (beta2 * precision + recall + 1e-8)
-            scores.append(fm)
-
-        return torch.stack(scores).mean().item()
-
-    def _compute_emeasure(self, pred, mask, eps=1e-8):
-        """ 计算 E-measure """
-        pred = pred.float()
-        mask = (mask >= 0.5).float()
-
-        scores = []
-
-        for p, g in zip(pred, mask):
-            p = p.squeeze()
-            g = g.squeeze()
-
-            # 特殊情况：GT 全背景
-            if g.sum() == 0:
-                scores.append(1.0 - p.mean())
-                continue
-
-            # 特殊情况：GT 全前景
-            if g.sum() == g.numel():
-                scores.append(p.mean())
-                continue
-
-            p_mean = p.mean()
-            g_mean = g.mean()
-
-            p_align = p - p_mean
-            g_align = g - g_mean
-
-            align_matrix = 2 * p_align * g_align / (
-                p_align * p_align + g_align * g_align + eps
-            )
-
-            enhanced = ((align_matrix + 1) ** 2) / 4
-
-            scores.append(enhanced.mean())
-
-        return torch.stack(scores).mean().item()
+    def _to_uint8_numpy(self, x):
+        x = x.squeeze().detach().cpu().numpy()
+        x = np.clip(x, 0, 1)
+        x = (x * 255).astype(np.uint8)
+        return x
 
     def _compute_bce_iou_loss(self, pred_logits, masks):
         """ BCE + Soft IoU Loss """
@@ -94,19 +61,86 @@ class Trainer:
         pred = torch.sigmoid(pred_logits)
         inter = (pred * masks).sum(dim=(1, 2, 3))
         union = (pred + masks - pred * masks).sum(dim=(1, 2, 3))
-        iou = (inter / (union + 1e-8)).mean()
+        iou = (inter / (union + EPS)).mean()
 
         return bce + (1.0 - iou)
 
-    def _compute_loss(self, outputs, masks):
-        """ 单输出模型与多输出模型损失计算 """
-        if not isinstance(outputs, (tuple, list)):
-            return self._compute_bce_iou_loss(outputs, masks)
+    def _ssim_loss(self, pred, mask, window_size=11, sigma=1.5):
+        """
+        SSIM Loss
 
-        loss = 0.0
-        for i, out in enumerate(outputs):
-            w = 2.0 if i == 0 else 1.0
-            loss = loss + w * self._compute_bce_iou_loss(out, masks)
+        pred / mask 均为 sigmoid 后的概率图，形状 [B, 1, H, W]，值域 [0, 1]。
+        返回标量 1 - mean_SSIM，值越小表示预测与 GT 结构越相似。
+        """
+        # ── 构造高斯核 ────────────────────────────────────────
+        coords = torch.arange(window_size, dtype=pred.dtype, device=pred.device)
+        coords -= window_size // 2
+        g = torch.exp(-(coords ** 2) / (2 * sigma ** 2))
+        g /= g.sum()
+        kernel = g.unsqueeze(0) * g.unsqueeze(1)          # [ws, ws]
+        kernel = kernel.unsqueeze(0).unsqueeze(0)          # [1, 1, ws, ws]
+
+        pad = window_size // 2
+
+        def _conv(x):
+            return torch.nn.functional.conv2d(x, kernel, padding=pad)
+
+        # ── 局部统计量 ────────────────────────────────────────
+        mu_p  = _conv(pred)
+        mu_g  = _conv(mask)
+        mu_p2 = mu_p * mu_p
+        mu_g2 = mu_g * mu_g
+        mu_pg = mu_p * mu_g
+
+        sigma_p2  = _conv(pred * pred) - mu_p2
+        sigma_g2  = _conv(mask * mask) - mu_g2
+        sigma_pg  = _conv(pred * mask) - mu_pg
+
+        # ── SSIM 公式 ────────────────
+        C1 = 0.01 ** 2
+        C2 = 0.03 ** 2
+
+        ssim_map = (2 * mu_pg + C1) * (2 * sigma_pg + C2) / (
+            (mu_p2 + mu_g2 + C1) * (sigma_p2 + sigma_g2 + C2) + EPS
+        )
+
+        ssim_loss = torch.clamp((1.0 - ssim_map) / 2.0, 0, 1)
+        return ssim_loss.mean()
+
+    def _compute_bce_ssim_iou_loss(self, pred_logits, masks):
+        """ BCE + SSIM + Soft IoU Loss  """
+        bce = self.criterion(pred_logits, masks)
+
+        pred = torch.sigmoid(pred_logits)
+
+        ssim = self._ssim_loss(pred, masks)
+
+        inter = (pred * masks).sum(dim=(1, 2, 3))
+        union = (pred + masks - pred * masks).sum(dim=(1, 2, 3))
+        iou = (inter / (union + EPS)).mean()
+
+        return bce + ssim + (1.0 - iou)
+
+    def _compute_loss(self, outputs, masks, weights=None, use_aux=True):
+        """ 单输出模型/多输出模型损失计算 """
+
+        # 单输出模型损失
+        if not isinstance(outputs, (tuple, list)):
+            return self._compute_bce_ssim_iou_loss(outputs, masks)
+
+        # 主输出
+        loss = MAIN_LOSS_WEIGHT * self._compute_bce_ssim_iou_loss(outputs[0], masks)
+
+        # 辅助输出
+        if use_aux and len(outputs) > 1:
+            aux_loss = 0.0
+
+            for out in outputs[1:]:
+                aux_loss = aux_loss + self._compute_bce_iou_loss(out, masks)
+
+            aux_loss = aux_loss / max(1, len(outputs) - 1)
+            loss = loss + AUX_LOSS_WEIGHT * aux_loss
+
         return loss
 
     def _run_epoch(self, epoch):
@@ -127,7 +161,8 @@ class Trainer:
             outputs = self.model(images)
 
             # 损失计算
-            loss = self._compute_loss(outputs, masks)
+            weights = getattr(self.model, 'loss_weights', None)
+            loss = self._compute_loss(outputs, masks, weights=weights)
             total_loss += loss.item() * images.size(0)
             total_samples += images.size(0)
 
@@ -144,10 +179,14 @@ class Trainer:
         self.model.eval()
 
         total_loss = 0.0
-        total_mae = 0.0
-        total_fmeasure = 0.0
-        total_emeasure = 0.0
         total_samples = 0
+
+        # 标准 SOD 指标
+        mae_metric = MAE()
+        fm_metric = Fmeasure()
+        em_metric = Emeasure()
+        sm_metric = Smeasure()
+        wfm_metric = WeightedFmeasure()
 
         with torch.no_grad():
             for batch in tqdm(self.valid_loader, desc=f"Epoch {epoch+1:02d} [Eval]"):
@@ -156,49 +195,116 @@ class Trainer:
 
                 outputs = self.model(images)
 
-                loss = self._compute_loss(outputs, masks)
+                # 验证 loss 仍然按训练损失算
+                weights = getattr(self.model, "loss_weights", None)
+                loss = self._compute_loss(outputs, masks, weights=weights)
 
-                # 取最终预测图
                 preds = outputs[0] if isinstance(outputs, (tuple, list)) else outputs
+
+                # 如果输出尺寸和 mask 不一致，先对齐
+                if preds.shape[-2:] != masks.shape[-2:]:
+                    preds = torch.nn.functional.interpolate(
+                        preds,
+                        size=masks.shape[-2:],
+                        mode="bilinear",
+                        align_corners=False,
+                    )
+
                 preds = torch.sigmoid(preds)
 
-                # 计算指标
-                mae = self._compute_mae(preds, masks)
-                fmeasure = self._compute_fmeasure(preds, masks)
-                emeasure = self._compute_emeasure(preds, masks)
-
                 total_loss += loss.item() * images.size(0)
-                total_mae += mae * images.size(0)
-                total_fmeasure += fmeasure * images.size(0)
-                total_emeasure += emeasure * images.size(0)
                 total_samples += images.size(0)
 
+                # 逐图更新 pysodmetrics
+                for pred, mask in zip(preds, masks):
+                    pred_np = self._to_uint8_numpy(pred)
+                    mask_np = self._to_uint8_numpy(mask)
+
+                    mae_metric.step(pred=pred_np, gt=mask_np)
+                    fm_metric.step(pred=pred_np, gt=mask_np)
+                    em_metric.step(pred=pred_np, gt=mask_np)
+                    sm_metric.step(pred=pred_np, gt=mask_np)
+                    wfm_metric.step(pred=pred_np, gt=mask_np)
+
         avg_loss = total_loss / total_samples
-        avg_mae = total_mae / total_samples
-        avg_fmeasure = total_fmeasure / total_samples
-        avg_emeasure = total_emeasure / total_samples
 
-        return avg_loss, avg_mae, avg_fmeasure, avg_emeasure
+        mae = mae_metric.get_results()["mae"]
 
-    def _save_checkpoints(self, val_mae, val_fmeasure, val_emeasure):
+        fm = fm_metric.get_results()["fm"]
+        em = em_metric.get_results()["em"]
+        sm = sm_metric.get_results()["sm"]
+        wfm = wfm_metric.get_results()["wfm"]
+
+        val_metrics = {
+            "mae": float(mae),
+
+            "maxf": float(fm["curve"].max()),
+            "meanf": float(fm["curve"].mean()),
+            "adpf": float(fm["adp"]),
+
+            "maxe": float(em["curve"].max()),
+            "meane": float(em["curve"].mean()),
+            "adpe": float(em["adp"]),
+
+            "smeasure": float(sm),
+            "wfm": float(wfm),
+        }
+
+        return avg_loss, val_metrics
+    
+    def _save_result(self):                                                                                                                                                                                                                         
+        result_path = os.path.join(self.output_dir, "..", "result.json")                                                                                       
+                                                                                                                                                       
+        if os.path.exists(result_path):                                                                                                                          
+            with open(result_path, "r", encoding="utf-8") as f:                                                                                                  
+                results = json.load(f)                                                                                                                           
+        else:                                                                                                                                                    
+            results = {}                                                                                                                                         
+                                                                                                                                                 
+        model_name = self.model.__class__.__name__                                                                                                        
+        results[model_name] = {
+            "best_mae": self.best_mae,
+            "best_maxf": self.best_maxf,
+            "best_smeasure": self.best_smeasure,
+            "best_wfm": self.best_wfm,
+        }                                                                                                                                             
+
+        with open(result_path, "w", encoding="utf-8") as f:                                                                                               
+            json.dump(results, f, indent=4, ensure_ascii=False)  
+
+        print(f"✅ Model result saved!")
+        
+
+    def _save_checkpoints(self, val_metrics):
+        val_mae = val_metrics["mae"]
+
         if val_mae < self.best_mae:
             self.best_mae = val_mae
-            self.best_fmeasure = val_fmeasure
+            self.best_maxf = val_metrics["maxf"]
+            self.best_smeasure = val_metrics["smeasure"]
+            self.best_wfm = val_metrics["wfm"]
 
             save_path = os.path.join(self.output_dir, "best_model.pth")
             torch.save(
                 {
                     "model_state_dict": self.model.state_dict(),
                     "optimizer_state_dict": self.optimizer.state_dict(),
+
                     "best_mae": self.best_mae,
-                    "best_fmeasure": self.best_fmeasure,
+                    "best_maxf": self.best_maxf,
+                    "best_smeasure": self.best_smeasure,
+                    "best_wfm": self.best_wfm,
                 },
-                save_path
+                save_path,
             )
 
             print(
                 f"✅ Best Model Saved! "
-                f"MAE: {val_mae:.4f} | F-measure: {val_fmeasure:.4f} | E-measure: {val_emeasure:.4f}"
+                f"MAE: {val_metrics['mae']:.4f} | "
+                f"maxF: {val_metrics['maxf']:.4f} | "
+                f"wF: {val_metrics['wfm']:.4f} | "
+                f"S-measure: {val_metrics['smeasure']:.4f} | "
+                f"maxE: {val_metrics['maxe']:.4f}"
             )
 
     def _save_training_log(self):
@@ -206,11 +312,25 @@ class Trainer:
         log = {
             "train_losses": self.train_losses,
             "val_losses": self.val_losses,
+
             "val_maes": self.val_maes,
-            "val_fmeasures": self.val_fmeasures,
-            "val_emeasures": self.val_emeasures,
+
+            "val_maxfs": self.val_maxfs,
+            "val_meanfs": self.val_meanfs,
+            "val_adpfs": self.val_adpfs,
+
+            "val_wfms": self.val_wfms,
+
+            "val_maxes": self.val_maxes,
+            "val_meanes": self.val_meanes,
+            "val_adpes": self.val_adpes,
+
+            "val_smeasures": self.val_smeasures,
+
             "best_mae": self.best_mae,
-            "best_fmeasure": self.best_fmeasure,
+            "best_maxf": self.best_maxf,
+            "best_smeasure": self.best_smeasure,
+            "best_wfm": self.best_wfm,
         }
 
         log_path = os.path.join(self.output_dir, "training_log.json")
@@ -225,42 +345,76 @@ class Trainer:
         self.val_fmeasures = []
         self.val_emeasures = []
 
+        self._ds_warmup_epochs = max(1, int(epochs * self.ds_warmup_ratio))
+
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            self.optimizer, T_max=epochs, eta_min=1e-6
+            self.optimizer, T_max=epochs, eta_min=LR_ETA_MIN
         )
 
         for epoch in range(epochs):
             train_loss = self._run_epoch(epoch)
-            val_loss, val_mae, val_fmeasure, val_emeasure = self._evaluate(epoch)
+            val_loss, val_metrics = self._evaluate(epoch)
 
-            scheduler.step()
+            # 学习率调度
+            scheduler.step()                    
 
             self.train_losses.append(train_loss)
             self.val_losses.append(val_loss)
-            self.val_maes.append(val_mae)
-            self.val_fmeasures.append(val_fmeasure)
-            self.val_emeasures.append(val_emeasure)
+
+            self.val_maes.append(val_metrics["mae"])
+
+            self.val_maxfs.append(val_metrics["maxf"])
+            self.val_meanfs.append(val_metrics["meanf"])
+            self.val_adpfs.append(val_metrics["adpf"])
+
+            self.val_wfms.append(val_metrics["wfm"])
+
+            self.val_maxes.append(val_metrics["maxe"])
+            self.val_meanes.append(val_metrics["meane"])
+            self.val_adpes.append(val_metrics["adpe"])
+
+            self.val_smeasures.append(val_metrics["smeasure"])
+
+            current_lr = self.optimizer.param_groups[0]['lr']
 
             print(
                 f"Epoch {epoch + 1:02d}/{epochs} | "
                 f"train_loss: {train_loss:.4f} | "
                 f"val_loss: {val_loss:.4f} | "
-                f"MAE: {val_mae:.4f} | "
-                f"F-measure: {val_fmeasure:.4f} | "
-                f"E-measure: {val_emeasure:.4f}"
+                f"MAE: {val_metrics['mae']:.4f} | "
+                f"maxF: {val_metrics['maxf']:.4f} | "
+                f"wF: {val_metrics['wfm']:.4f} | "
+                f"S: {val_metrics['smeasure']:.4f} | "
+                f"maxE: {val_metrics['maxe']:.4f} | "
+                f"lr: {current_lr:.6f}"
             )
 
-            self._save_checkpoints(val_mae, val_fmeasure, val_emeasure)
+            self._save_checkpoints(val_metrics)
             self._save_training_log()
 
+        self._save_result()
         print(f"✅ Model Training Finished! Best MAE: {self.best_mae}")
 
         return {
             "train_losses": self.train_losses,
             "val_losses": self.val_losses,
+
             "val_maes": self.val_maes,
-            "val_fmeasures": self.val_fmeasures,
-            "val_emeasures": self.val_emeasures,
+
+            "val_maxfs": self.val_maxfs,
+            "val_meanfs": self.val_meanfs,
+            "val_adpfs": self.val_adpfs,
+
+            "val_wfms": self.val_wfms,
+
+            "val_maxes": self.val_maxes,
+            "val_meanes": self.val_meanes,
+            "val_adpes": self.val_adpes,
+
+            "val_smeasures": self.val_smeasures,
+
             "best_mae": self.best_mae,
-            "best_fmeasure": self.best_fmeasure,
+            "best_maxf": self.best_maxf,
+            "best_smeasure": self.best_smeasure,
+            "best_wfm": self.best_wfm,
         }
