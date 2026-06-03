@@ -43,7 +43,7 @@ _PROJECT_ROOT = os.path.dirname(_SRC_DIR)
 PLATFORM = "AutoDL"   
 
 # 数据规模
-SCALING  = False
+SCALING  = True
 
 # 数据路径
 if PLATFORM == "Local":
@@ -80,8 +80,8 @@ IMAGENET_STD  = [0.229, 0.224, 0.225]
 # ──────────────────────────────────────────
 # 数据加载
 # ──────────────────────────────────────────
-VAL_RATIO    = 0.3
-BATCH_SIZE   = 16
+VAL_RATIO    = 0.3 if SCALING is not True else 0.1
+BATCH_SIZE   = 16 if SCALING is not True else 64
 NUM_WORKERS  = 0
 SEED         = 42
 
@@ -89,8 +89,8 @@ SEED         = 42
 # 训练
 # ──────────────────────────────────────────
 EPOCHS          = 25
-LEARNING_RATE   = 3e-4
-BACKBONE_LR     = 5e-5
+LEARNING_RATE   = 3e-4 if SCALING is not True else 2e-4
+BACKBONE_LR     = 5e-5 if SCALING is not True else 1e-5
 WEIGHT_DECAY    = 5e-4
 LR_ETA_MIN      = 1e-6
 

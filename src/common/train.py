@@ -8,7 +8,7 @@ import numpy as np
 from py_sod_metrics import MAE, Fmeasure, Emeasure, Smeasure, WeightedFmeasure
 
 from .config import (
-    THRESHOLD, EPS,
+    THRESHOLD, EPS, SCALING,
     MAIN_LOSS_WEIGHT, AUX_LOSS_WEIGHT, LR_ETA_MIN,
 )
 
@@ -252,8 +252,8 @@ class Trainer:
 
         return avg_loss, val_metrics
     
-    def _save_result(self):                                                                                                                                                                                                                         
-        result_path = os.path.join(self.output_dir, "..", "result.json")                                                                                       
+    def _save_result(self):                                                                                                                                                                                                                       
+        result_path = os.path.join(self.output_dir, "..", "result_small.json")                                                                                       
                                                                                                                                                        
         if os.path.exists(result_path):                                                                                                                          
             with open(result_path, "r", encoding="utf-8") as f:                                                                                                  
@@ -272,7 +272,7 @@ class Trainer:
         with open(result_path, "w", encoding="utf-8") as f:                                                                                               
             json.dump(results, f, indent=4, ensure_ascii=False)  
 
-        print(f"✅ Model result saved!")
+        print(f"✅ Model result saved to: {result_path}!")
         
 
     def _save_checkpoints(self, val_metrics):
@@ -347,8 +347,16 @@ class Trainer:
 
         self._ds_warmup_epochs = max(1, int(epochs * self.ds_warmup_ratio))
 
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            self.optimizer, T_max=epochs, eta_min=LR_ETA_MIN
+        # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        #     optimizer,
+        #     T_max=epochs,
+        #     eta_min=LR_ETA_MIN
+        # )
+
+        scheduler = torch.optim.lr_scheduler.MultiStepLR(
+            self.optimizer,
+            milestones=[15, 22],
+            gamma=0.1
         )
 
         for epoch in range(epochs):
@@ -392,7 +400,9 @@ class Trainer:
             self._save_checkpoints(val_metrics)
             self._save_training_log()
 
-        self._save_result()
+        # ECSSD 训练/测试时在训练阶段保存结果
+        if SCALING is not True:
+            self._save_result()
         print(f"✅ Model Training Finished! Best MAE: {self.best_mae}")
 
         return {

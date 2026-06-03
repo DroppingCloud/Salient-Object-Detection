@@ -128,6 +128,29 @@ class Evaluator:
             save_path=os.path.join(self.save_dir, "test_predictions_with_error.png"),
             seed=seed,
         )
+
+    def save_result(self, res):
+        result_path = os.path.join(config.OUTPUT_DIR, "result_scaling.json")
+
+        if os.path.exists(result_path):
+            with open(result_path, "r", encoding="utf-8") as f:
+                results = json.load(f)
+        else:
+            results = {}
+
+        model_name = self.model.__class__.__name__
+
+        results[model_name] = {
+            "mae": res["mae"],
+            "maxf": res["maxf"],
+            "smeasure": res["smeasure"],
+            "wfm": res["wfm"],
+        }
+
+        with open(result_path, "w", encoding="utf-8") as f:
+            json.dump(results, f, indent=4, ensure_ascii=False)
+
+        print(f"✅ Scaling result saved to: {result_path}")
         
     def evaluate(self):
         self.model.eval()
@@ -248,6 +271,10 @@ if __name__ == "__main__":
 
     # 指标评估
     results = evaluator.evaluate()
+
+    # 保存指标
+    if config.SCALING:
+        evaluator.save_result(results)
 
     # 可视化
     evaluator.visualize()
