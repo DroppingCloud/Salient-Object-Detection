@@ -97,7 +97,7 @@ class ResNetLocate(nn.Module):
 
         # c4 特征压缩
         p = self.ppms_pre(c4)                         # (B, 256, H/32, W/32)
-        # PPM 生成多尺度增强特征
+        # PPM 生成多尺度增强全局上下文
         xls = [p] + [
             F.interpolate(ppm(p), p.shape[2:], mode='bilinear', align_corners=True)
             for ppm in self.ppms
@@ -105,7 +105,7 @@ class ResNetLocate(nn.Module):
         # 4 路特征拼接: 融合深层语义与全局上下文信息
         xls = self.ppm_cat(torch.cat(xls, dim=1))     # [B, (256 × 4), H/32, W/32]
 
-        # PPM 特征插值到 layer3/2/1 对应分辨率并投影到对应通道
+        # GGF: PPM 特征插值到 layer3/2/1 对应分辨率并投影到对应通道
         info3 = self.infos[0](
             F.interpolate(xls, c3.shape[2:], mode='bilinear', align_corners=True)
         )
@@ -134,50 +134,81 @@ class ConvertLayer(nn.Module):
         return [conv(f) for conv, f in zip(self.converts, feats)]
 
 class DeepPoolLayer(nn.Module):
+
     def __init__(self, k, k_out, need_x2, need_fuse):
         super().__init__()
-        self.need_x2 = need_x2              # 是否上采样
-        self.need_fuse = need_fuse          # 是否融合
 
-        # 用不同 dilation rate 的卷积捕获多尺度感受野，保持空间分辨率
-        dilations = [2, 4, 8]
-        self.convs = nn.ModuleList([
-            nn.Conv2d(k, k, 3, padding=d, dilation=d, bias=False)
-            for d in dilations
+        self.need_x2 = need_x2
+        self.need_fuse = need_fuse
+        self.pool_scales = [2, 4, 8]
+
+        # 先把输入通道 k 调整到输出通道 k_out
+        self.conv_in = nn.Sequential(
+            nn.Conv2d(k, k_out, kernel_size=3, padding=1, bias=False),
+            nn.ReLU(inplace=True)
+        )
+
+        # FAM 的多尺度平均池化分支
+        self.pool_convs = nn.ModuleList([
+            nn.Sequential(
+                nn.Conv2d(k_out, k_out, kernel_size=3, padding=1, bias=False),
+                nn.ReLU(inplace=True)
+            )
+            for _ in self.pool_scales
         ])
 
-        self.relu = nn.ReLU(inplace=True)
+        # 多尺度聚合后的卷积融合
+        self.conv_out = nn.Sequential(
+            nn.Conv2d(k_out, k_out, kernel_size=3, padding=1, bias=False),
+            nn.ReLU(inplace=True)
+        )
 
-        self.conv_sum = nn.Conv2d(k, k_out, 3, padding=1, bias=False)       # 通道调整
-        self.conv_fuse = nn.Conv2d(k_out, k_out, 3, padding=1, bias=False)  # 特征融合
+    def _adaptive_pool(self, x, scale):
+        h, w = x.shape[2:]
+        out_h = max(1, h // scale)
+        out_w = max(1, w // scale)
+        return F.adaptive_avg_pool2d(x, output_size=(out_h, out_w))
+
+    def _fam(self, x):
+        size = x.shape[2:]
+
+        out = x
+        for scale, conv in zip(self.pool_scales, self.pool_convs):
+            pooled = self._adaptive_pool(x, scale)
+            pooled = conv(pooled)
+            pooled = F.interpolate(
+                pooled,
+                size=size,
+                mode='bilinear',
+                align_corners=True
+            )
+            out = out + pooled
+
+        out = self.conv_out(out)
+        return out
 
     def forward(self, x, x_skip=None, x_info=None):
-        # 多尺度空洞卷积叠加形成增强特征
-        out = x
-
-        for conv in self.convs:
-            out = out + conv(x)
-
-        out = self.relu(out)
-
-        # 对齐 skip 尺寸
+        # 上采样高层特征到 skip feature 尺寸
         if self.need_x2:
-            out = F.interpolate(
-                out,
-                x_skip.shape[2:],
+            x = F.interpolate(
+                x,
+                size=x_skip.shape[2:],
                 mode='bilinear',
                 align_corners=True
             )
 
-        # 对齐通道
-        out = self.conv_sum(out)
+        # 通道调整
+        x = self.conv_in(x)
 
-        # 融合 out + skip + info
+        # 融合 skip feature 和 GGF feature
         if self.need_fuse:
-            out = self.conv_fuse(out + x_skip + x_info)
+            x = x + x_skip + x_info
 
-        return out
+        # 对融合后的特征做 FAM
+        x = self._fam(x)
 
+        return x
+    
 class ScoreLayer(nn.Module):
     """ 映射为单通道显著图 """
 

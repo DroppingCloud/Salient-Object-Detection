@@ -24,8 +24,12 @@ from py_sod_metrics import MAE, Emeasure, Fmeasure, Smeasure, WeightedFmeasure
 from common.config import (
     MODEL_REGISTRY, DEVICE, OUTPUT_DIR, TEST_DIR,
     CROP_SIZE, IMAGENET_MEAN, IMAGENET_STD, THRESHOLD,
+    BACKBONE,
 )
 from common.data import JointTransform, SaliencyDataset
+
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning)
 
 
 def denormalize(tensor, mean=IMAGENET_MEAN, std=IMAGENET_STD):
@@ -105,7 +109,7 @@ def get_sort_score(metrics, metric_name):
     return value
 
 
-def run_topk(model, test_dir, device, topk=10, metric="adpF", crop_size=CROP_SIZE):
+def run_topk(model, test_dir, device, topk=5, metric="adpF", crop_size=CROP_SIZE):
     """ 返回效果最好的 Top-K 样本 """
 
     transform = JointTransform(train=False, crop_size=crop_size)
@@ -344,7 +348,11 @@ def main():
     device = DEVICE
     print(f"Device: {device}")
 
-    model = MODEL_REGISTRY[args.model]().to(device)
+    model_cls = MODEL_REGISTRY[args.model]
+    try:
+        model = model_cls(backbone_name=BACKBONE).to(device)
+    except TypeError:
+        model = model_cls().to(device)
     ckpt_path = args.ckpt or os.path.join(
         OUTPUT_DIR,
         model.__class__.__name__,

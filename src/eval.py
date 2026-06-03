@@ -21,6 +21,9 @@ from common import (
 from common import distributed as dist_utils
 from common.data import JointTransform, SaliencyDataset
 
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning)
+
 class Evaluator:
     def __init__(
         self,
@@ -276,7 +279,11 @@ def main():
         print(f"Multi-GPU evaluation: {use_distributed}")
 
     # 加载模型
-    model = config.MODEL_REGISTRY[args.model]().to(device)
+    model_cls = config.MODEL_REGISTRY[args.model]
+    try:
+        model = model_cls(backbone_name=config.BACKBONE).to(device)
+    except TypeError:
+        model = model_cls().to(device)
     ckpt_path = os.path.join(config.OUTPUT_DIR, model.__class__.__name__, "best_model.pth")
     ckpt = torch.load(ckpt_path, map_location=device)
     dist_utils.load_model_state(model, ckpt)

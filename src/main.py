@@ -14,6 +14,8 @@ from common import (
 )
 from common import distributed as dist_utils
 
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning)
 
 def main():
     parser = argparse.ArgumentParser()
@@ -62,6 +64,7 @@ def main():
         raw_model = model_cls().to(device)
     if dist_utils.is_main_process():
         print(f"Model       : {raw_model.__class__.__name__}")
+        print(f"Backbone    : {config.BACKBONE}\n")
 
     # =========================
     # 损失函数与优化器
