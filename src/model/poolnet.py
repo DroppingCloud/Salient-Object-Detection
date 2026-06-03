@@ -2,31 +2,71 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .resnet18 import ResNet18, ResNet18Pre
+from .resnet import ResNet18, ResNet18Pre, ResNet34Pre, ResNet50Pre
 
 # ─────────────────────────────────────────────
 # 配置
 # ─────────────────────────────────────────────
-# Convert Layer 
-_IN_CH  = [64, 128, 256, 512]       # [c1, c2, c3, c4]
-_OUT_CH = [128, 256, 256, 256]  
+# 融合与上采样
+_DP_X2   = [True,  True,  True,  False]
+_DP_FUSE = [True,  True,  True,  False]
 
-# deep_pool 配置
-_DP_IN    = [256, 256, 256, 128]
-_DP_OUT   = [256, 256, 128, 128]
-_DP_X2    = [True,  True,  True,  False]
-_DP_FUSE  = [True,  True,  True,  False]
+# backbone 名称 
+_BACKBONE_TABLE = {
+    "resnet18": (ResNet18Pre, ResNet18, [64, 128, 256, 512]),
+    "resnet34": (ResNet34Pre, None,     [64, 128, 256, 512]),
+    "resnet50": (ResNet50Pre, None,     [256, 512, 1024, 2048]),
+}
 
-class ResNet18Locate(nn.Module):
+# 各 backbone 对应的 decoder 通道配置
+# out_ch      : ConvertLayer 输出通道 [c1, c2, c3, c4]
+# dp_in/dp_out: DeepPoolLayer 输入/输出通道（从深到浅 4 级）
+_DECODER_CFG = {
+    "resnet18": {
+        "out_ch": [128, 256, 256, 256],
+        "dp_in":  [256, 256, 256, 128],
+        "dp_out": [256, 256, 128, 128],
+    },
+    "resnet34": {
+        "out_ch": [128, 256, 256, 256],
+        "dp_in":  [256, 256, 256, 128],
+        "dp_out": [256, 256, 128, 128],
+    },
+    "resnet50": {
+        "out_ch": [256, 512, 512, 512],
+        "dp_in":  [512, 512, 512, 256],
+        "dp_out": [512, 512, 256, 256],
+    },
+}
+
+def _get_backbone(name="resnet18", pretrained=True):
+    """根据名称返回 backbone 实例和各 stage 通道列表"""
+    pre_cls, scratch_cls, channels = _BACKBONE_TABLE[name]
+    if pretrained:
+        backbone = pre_cls()
+    else:
+        if scratch_cls is None:
+            raise ValueError(f"{name} 没有随机初始化版本，请使用 pretrained=True")
+        backbone = scratch_cls()
+    return backbone, channels
+
+
+def _get_decoder_cfg(name="resnet18"):
+    """根据 backbone 名称返回 decoder 通道配置"""
+    return _DECODER_CFG[name]
+
+class ResNetLocate(nn.Module):
     """ Backbone + PPM """
-    def __init__(self, pretrained=True):
+    def __init__(self, pretrained=True, backbone_name="resnet18"):
         super().__init__()
         # 多尺度特征
-        self.backbone = ResNet18Pre() if pretrained else ResNet18()
+        self.backbone, channels = _get_backbone(backbone_name, pretrained)
+        cfg = _get_decoder_cfg(backbone_name)
+        c4_ch = channels[3]
 
         # PPM 金字塔池化
-        self.in_planes = 256
-        self.ppms_pre = nn.Conv2d(512, self.in_planes, 1, bias=False)
+        self.in_planes = cfg["dp_out"][0]
+        self.ppms_pre = nn.Conv2d(c4_ch, self.in_planes, 1, bias=False)
         self.ppms = nn.ModuleList([
             nn.Sequential(
                 nn.AdaptiveAvgPool2d(s),
@@ -41,8 +81,8 @@ class ResNet18Locate(nn.Module):
             nn.ReLU(inplace=True),
         )
 
-        # PPM 特征插值到各 skip 尺寸
-        self.out_planes = [256, 256, 128]
+        # PPM 特征插值到各 skip 尺寸 (对应 dp_out[0], dp_out[1], dp_out[2])
+        self.out_planes = cfg["dp_out"][:3]
         self.infos = nn.ModuleList([
             nn.Sequential(
                 nn.Conv2d(self.in_planes, ch, 3, padding=1, bias=False),
@@ -154,23 +194,26 @@ class ScoreLayer(nn.Module):
         return x
 
 class PoolNet(nn.Module):
-    def __init__(self, pretrained=True):
+    def __init__(self, pretrained=True, backbone_name="resnet18"):
         super().__init__()
+        cfg = _get_decoder_cfg(backbone_name)
+
         # Encoder 形成多尺度特征与全局上下文信息
-        self.base = ResNet18Locate(pretrained=pretrained)
+        self.base = ResNetLocate(pretrained=pretrained, backbone_name=backbone_name)
         self.backbone = self.base.backbone
 
         # [c1, c2, c3, c4] 通道调整
-        self.convert = ConvertLayer(_IN_CH, _OUT_CH)
+        channels = _BACKBONE_TABLE[backbone_name][2]
+        self.convert = ConvertLayer(channels, cfg["out_ch"])
 
         # Decoder 融合不同特征
         self.deep_pool = nn.ModuleList([
-            DeepPoolLayer(_DP_IN[i], _DP_OUT[i], _DP_X2[i], _DP_FUSE[i])
+            DeepPoolLayer(cfg["dp_in"][i], cfg["dp_out"][i], _DP_X2[i], _DP_FUSE[i])
             for i in range(4)
         ])
 
-        # 输出头
-        self.score = ScoreLayer(128)
+        # 输出头（最浅层 dp_out[-1]）
+        self.score = ScoreLayer(cfg["dp_out"][-1])
 
         self._init_weights()
 

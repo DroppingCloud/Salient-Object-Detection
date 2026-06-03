@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .resnet18 import ResNet18, ResNet18Pre
+from .resnet import ResNet18, ResNet18Pre
 
 
 class ConvBNReLU(nn.Module):

@@ -9,8 +9,9 @@ from py_sod_metrics import MAE, Fmeasure, Emeasure, Smeasure, WeightedFmeasure
 
 from .config import (
     THRESHOLD, EPS, SCALING,
-    MAIN_LOSS_WEIGHT, AUX_LOSS_WEIGHT, LR_ETA_MIN,
+    MAIN_LOSS_WEIGHT, AUX_LOSS_WEIGHT, LR_ETA_MIN, USE_AMP,
 )
+from . import distributed as dist_utils
 
 class Trainer:
     def __init__(self, model, optimizer, criterion, train_loader, valid_loader, device, output_dir="./outputs", threshold=THRESHOLD):
@@ -23,9 +24,11 @@ class Trainer:
 
         self.device = device
 
-        model_name = self.model.__class__.__name__
+        model_name = dist_utils.unwrap_model(self.model).__class__.__name__
         self.output_dir = os.path.join(output_dir, model_name)
-        os.makedirs(self.output_dir, exist_ok=True)
+        if dist_utils.is_main_process():
+            os.makedirs(self.output_dir, exist_ok=True)
+        dist_utils.barrier()
 
         self.best_mae = float("inf")
         self.best_maxf = 0.0
@@ -47,6 +50,8 @@ class Trainer:
 
         # 深监督 warm-up 比例
         self.ds_warmup_ratio = 0.4
+        self.use_amp = USE_AMP and torch.device(device).type == "cuda"
+        self.scaler = torch.cuda.amp.GradScaler(enabled=self.use_amp)
 
     def _to_uint8_numpy(self, x):
         x = x.squeeze().detach().cpu().numpy()
@@ -149,7 +154,11 @@ class Trainer:
         total_loss = 0.0
         total_samples = 0
 
-        for batch in tqdm(self.train_loader, desc=f"Epoch {epoch+1:02d} [Training]"):
+        for batch in tqdm(
+            self.train_loader,
+            desc=f"Epoch {epoch+1:02d} [Training]",
+            disable=not dist_utils.is_main_process(),
+        ):
             # 清空梯度
             self.optimizer.zero_grad()
 
@@ -157,20 +166,24 @@ class Trainer:
             images = batch["image"].to(self.device)
             masks = batch["mask"].to(self.device)
 
-            # 模型输出
-            outputs = self.model(images)
+            with torch.cuda.amp.autocast(enabled=self.use_amp):
+                # 模型输出
+                outputs = self.model(images)
 
-            # 损失计算
-            weights = getattr(self.model, 'loss_weights', None)
-            loss = self._compute_loss(outputs, masks, weights=weights)
+                # 损失计算
+                weights = getattr(dist_utils.unwrap_model(self.model), 'loss_weights', None)
+                loss = self._compute_loss(outputs, masks, weights=weights)
             total_loss += loss.item() * images.size(0)
             total_samples += images.size(0)
 
             # 梯度反向传播
-            loss.backward()
-            self.optimizer.step()
+            self.scaler.scale(loss).backward()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
 
         # 该 Epoch 平均样本损失
+        total_loss = dist_utils.reduce_sum(total_loss, self.device)
+        total_samples = dist_utils.reduce_sum(total_samples, self.device)
         avg_loss = total_loss / total_samples
 
         return avg_loss
@@ -189,15 +202,20 @@ class Trainer:
         wfm_metric = WeightedFmeasure()
 
         with torch.no_grad():
-            for batch in tqdm(self.valid_loader, desc=f"Epoch {epoch+1:02d} [Eval]"):
+            for batch in tqdm(
+                self.valid_loader,
+                desc=f"Epoch {epoch+1:02d} [Eval]",
+                disable=not dist_utils.is_main_process(),
+            ):
                 images = batch["image"].to(self.device)
                 masks = batch["mask"].to(self.device)
 
-                outputs = self.model(images)
+                with torch.cuda.amp.autocast(enabled=self.use_amp):
+                    outputs = self.model(images)
 
-                # 验证 loss 仍然按训练损失算
-                weights = getattr(self.model, "loss_weights", None)
-                loss = self._compute_loss(outputs, masks, weights=weights)
+                    # 验证 loss 仍然按训练损失算
+                    weights = getattr(dist_utils.unwrap_model(self.model), "loss_weights", None)
+                    loss = self._compute_loss(outputs, masks, weights=weights)
 
                 preds = outputs[0] if isinstance(outputs, (tuple, list)) else outputs
 
@@ -226,6 +244,8 @@ class Trainer:
                     sm_metric.step(pred=pred_np, gt=mask_np)
                     wfm_metric.step(pred=pred_np, gt=mask_np)
 
+        total_loss = dist_utils.reduce_sum(total_loss, self.device)
+        total_samples = dist_utils.reduce_sum(total_samples, self.device)
         avg_loss = total_loss / total_samples
 
         mae = mae_metric.get_results()["mae"]
@@ -261,7 +281,7 @@ class Trainer:
         else:                                                                                                                                                    
             results = {}                                                                                                                                         
                                                                                                                                                  
-        model_name = self.model.__class__.__name__                                                                                                        
+        model_name = dist_utils.unwrap_model(self.model).__class__.__name__
         results[model_name] = {
             "best_mae": self.best_mae,
             "best_maxf": self.best_maxf,
@@ -276,6 +296,9 @@ class Trainer:
         
 
     def _save_checkpoints(self, val_metrics):
+        if not dist_utils.is_main_process():
+            return
+
         val_mae = val_metrics["mae"]
 
         if val_mae < self.best_mae:
@@ -287,7 +310,7 @@ class Trainer:
             save_path = os.path.join(self.output_dir, "best_model.pth")
             torch.save(
                 {
-                    "model_state_dict": self.model.state_dict(),
+                    "model_state_dict": dist_utils.state_dict(self.model),
                     "optimizer_state_dict": self.optimizer.state_dict(),
 
                     "best_mae": self.best_mae,
@@ -309,6 +332,9 @@ class Trainer:
 
     def _save_training_log(self):
         """ 保存训练日志 """
+        if not dist_utils.is_main_process():
+            return
+
         log = {
             "train_losses": self.train_losses,
             "val_losses": self.val_losses,
@@ -360,6 +386,9 @@ class Trainer:
         )
 
         for epoch in range(epochs):
+            if hasattr(self.train_loader.sampler, "set_epoch"):
+                self.train_loader.sampler.set_epoch(epoch)
+
             train_loss = self._run_epoch(epoch)
             val_loss, val_metrics = self._evaluate(epoch)
 
@@ -385,25 +414,28 @@ class Trainer:
 
             current_lr = self.optimizer.param_groups[0]['lr']
 
-            print(
-                f"Epoch {epoch + 1:02d}/{epochs} | "
-                f"train_loss: {train_loss:.4f} | "
-                f"val_loss: {val_loss:.4f} | "
-                f"MAE: {val_metrics['mae']:.4f} | "
-                f"maxF: {val_metrics['maxf']:.4f} | "
-                f"wF: {val_metrics['wfm']:.4f} | "
-                f"S: {val_metrics['smeasure']:.4f} | "
-                f"maxE: {val_metrics['maxe']:.4f} | "
-                f"lr: {current_lr:.6f}"
-            )
+            if dist_utils.is_main_process():
+                print(
+                    f"Epoch {epoch + 1:02d}/{epochs} | "
+                    f"train_loss: {train_loss:.4f} | "
+                    f"val_loss: {val_loss:.4f} | "
+                    f"MAE: {val_metrics['mae']:.4f} | "
+                    f"maxF: {val_metrics['maxf']:.4f} | "
+                    f"wF: {val_metrics['wfm']:.4f} | "
+                    f"S: {val_metrics['smeasure']:.4f} | "
+                    f"maxE: {val_metrics['maxe']:.4f} | "
+                    f"lr: {current_lr:.6f}"
+                )
 
             self._save_checkpoints(val_metrics)
             self._save_training_log()
+            dist_utils.barrier()
 
         # ECSSD 训练/测试时在训练阶段保存结果
-        if SCALING is not True:
+        if SCALING is not True and dist_utils.is_main_process():
             self._save_result()
-        print(f"✅ Model Training Finished! Best MAE: {self.best_mae}")
+        if dist_utils.is_main_process():
+            print(f"✅ Model Training Finished! Best MAE: {self.best_mae}")
 
         return {
             "train_losses": self.train_losses,

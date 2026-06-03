@@ -18,6 +18,7 @@ from common import (
     visualize_predictions_with_error,
     config,
 )
+from common import distributed as dist_utils
 from common.data import JointTransform, SaliencyDataset
 
 class Evaluator:
@@ -35,6 +36,7 @@ class Evaluator:
         self.model = model
         self.device = device
         self.threshold = threshold
+        self.use_amp = config.USE_AMP and torch.device(device).type == "cuda"
 
         self.mae = 0.0
         self.Fmeasure = 0.0
@@ -44,9 +46,11 @@ class Evaluator:
         self.maxE = 0.0
         self.Smeasure = 0.0
 
-        model_name = model.__class__.__name__
+        model_name = dist_utils.unwrap_model(model).__class__.__name__
         self.save_dir = os.path.join(output_dir, model_name)
-        os.makedirs(self.save_dir, exist_ok=True)
+        if dist_utils.is_main_process():
+            os.makedirs(self.save_dir, exist_ok=True)
+        dist_utils.barrier()
 
         transform = JointTransform(train=False, crop_size=crop_size)
         dataset = SaliencyDataset(
@@ -63,6 +67,9 @@ class Evaluator:
     
     def _save_test_result(self, results):
         """ 保存测试结果 """
+        if not dist_utils.is_main_process():
+            return
+
         log = {
             "MAE":                results["mae"],
 
@@ -92,13 +99,16 @@ class Evaluator:
 
     def visualize(self, num_samples=None, seed=None):
         """ 原图 / GT / 预测 """
+        if not dist_utils.is_main_process():
+            return
+
         if num_samples is None:
             num_samples = config.VIZ_NUM_SAMPLES
         if seed is None:
             seed = config.VIZ_SEED
 
         visualize_predictions(
-            model=self.model,
+            model=dist_utils.unwrap_model(self.model),
             dataloader=self.dataloader,
             device=self.device,
             num_samples=num_samples,
@@ -112,13 +122,16 @@ class Evaluator:
 
     def visualize_with_error(self, num_samples=None, seed=None):
         """ 原图 / GT / 预测 / 误差图 """
+        if not dist_utils.is_main_process():
+            return
+
         if num_samples is None:
             num_samples = config.VIZ_NUM_SAMPLES
         if seed is None:
             seed = config.VIZ_SEED
 
         visualize_predictions_with_error(
-            model=self.model,
+            model=dist_utils.unwrap_model(self.model),
             dataloader=self.dataloader,
             device=self.device,
             num_samples=num_samples,
@@ -130,6 +143,9 @@ class Evaluator:
         )
 
     def save_result(self, res):
+        if not dist_utils.is_main_process():
+            return
+
         result_path = os.path.join(config.OUTPUT_DIR, "result_scaling.json")
 
         if os.path.exists(result_path):
@@ -138,7 +154,7 @@ class Evaluator:
         else:
             results = {}
 
-        model_name = self.model.__class__.__name__
+        model_name = dist_utils.unwrap_model(self.model).__class__.__name__
 
         results[model_name] = {
             "mae": res["mae"],
@@ -169,8 +185,9 @@ class Evaluator:
                 images = batch["image"].to(self.device)
                 masks  = batch["mask"].to(self.device)
 
-                outputs = self.model(images)
-                preds = outputs[0] if isinstance(outputs, (tuple, list)) else outputs
+                with torch.cuda.amp.autocast(enabled=self.use_amp):
+                    outputs = self.model(images)
+                    preds = outputs[0] if isinstance(outputs, (tuple, list)) else outputs
                 preds = torch.sigmoid(preds)
 
                 # 逐图送入 pysodmetrics
@@ -220,28 +237,29 @@ class Evaluator:
             "wfm": float(wfm),
         }
 
-        print("=" * 50)
-        print(f"  Test Results")
-        print("-" * 50)
-        for name, key in [
-            ("MAE",              "mae"),
-            ("Max F-measure",    "maxf"),
-            ("Mean F-measure",   "meanf"),
-            ("Adaptive F",       "adpf"),
-            ("Weighted F",       "wfm"),
-            ("Max E-measure",    "maxe"),
-            ("Mean E-measure",   "meane"),
-            ("Adaptive E",       "adpe"),
-            ("S-measure",        "smeasure"),
-        ]:
-            print(f"  {name:<20} {results[key]:.4f}")
-        print("=" * 50)
+        if dist_utils.is_main_process():
+            print("=" * 50)
+            print(f"  Test Results")
+            print("-" * 50)
+            for name, key in [
+                ("MAE",              "mae"),
+                ("Max F-measure",    "maxf"),
+                ("Mean F-measure",   "meanf"),
+                ("Adaptive F",       "adpf"),
+                ("Weighted F",       "wfm"),
+                ("Max E-measure",    "maxe"),
+                ("Mean E-measure",   "meane"),
+                ("Adaptive E",       "adpe"),
+                ("S-measure",        "smeasure"),
+            ]:
+                print(f"  {name:<20} {results[key]:.4f}")
+            print("=" * 50)
 
         self._save_test_result(results)
 
         return results
 
-if __name__ == "__main__":
+def main():
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
     parser = argparse.ArgumentParser()
@@ -250,19 +268,25 @@ if __name__ == "__main__":
                         help="选择模型")
     args = parser.parse_args()
 
-    print(f"Using device: {config.DEVICE}")
+    device = dist_utils.init_distributed(config) if config.EVAL_USE_MULTI_GPU else torch.device(config.DEVICE)
+    use_distributed = config.EVAL_USE_MULTI_GPU and dist_utils.can_use_distributed(config)
+
+    if dist_utils.is_main_process():
+        print(f"Using device: {device}")
+        print(f"Multi-GPU evaluation: {use_distributed}")
 
     # 加载模型
-    model = config.MODEL_REGISTRY[args.model]().to(config.DEVICE)
+    model = config.MODEL_REGISTRY[args.model]().to(device)
     ckpt_path = os.path.join(config.OUTPUT_DIR, model.__class__.__name__, "best_model.pth")
-    ckpt = torch.load(ckpt_path, map_location=config.DEVICE)
-    model.load_state_dict(ckpt["model_state_dict"])
+    ckpt = torch.load(ckpt_path, map_location=device)
+    dist_utils.load_model_state(model, ckpt)
+    model = dist_utils.wrap_model(model, device, config) if use_distributed else model
 
     # 构建 Evaluator
     evaluator = Evaluator(
         model=model,
         test_dir=config.TEST_DIR,
-        device=config.DEVICE,
+        device=device,
         output_dir=config.OUTPUT_DIR,
         threshold=config.THRESHOLD,
         batch_size=config.EVAL_BATCH_SIZE,
@@ -279,3 +303,10 @@ if __name__ == "__main__":
     # 可视化
     evaluator.visualize()
     evaluator.visualize_with_error()
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    finally:
+        dist_utils.destroy_distributed()

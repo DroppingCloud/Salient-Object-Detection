@@ -1,7 +1,9 @@
-import torch
 import torch.nn as nn
-from torchvision.models import resnet18, ResNet18_Weights
-import torch.nn as nn
+from torchvision.models import (
+    resnet18, ResNet18_Weights,
+    resnet34, ResNet34_Weights,
+    resnet50, ResNet50_Weights,
+)
 
 class BasicBlock(nn.Module):
     """ ResNet 基本残差块 """
@@ -94,6 +96,52 @@ class ResNet18Pre(nn.Module):
         self.layer2 = m.layer2   # 128, 1/8
         self.layer3 = m.layer3   # 256, 1/16
         self.layer4 = m.layer4   # 512, 1/32
+
+    def forward(self, x):
+        x = self.stem(x)
+        c1 = self.layer1(x)
+        c2 = self.layer2(c1)
+        c3 = self.layer3(c2)
+        c4 = self.layer4(c3)
+        return c1, c2, c3, c4
+
+
+class ResNet34Pre(nn.Module):
+    """ ImageNet 预训练 ResNet34 """
+    def __init__(self):
+        super().__init__()
+        m = resnet34(weights=ResNet34_Weights.IMAGENET1K_V1)
+
+        self.stem = nn.Sequential(
+            m.conv1, m.bn1, m.relu, m.maxpool
+        )
+        self.layer1 = m.layer1   # 64, 1/4
+        self.layer2 = m.layer2   # 128, 1/8
+        self.layer3 = m.layer3   # 256, 1/16
+        self.layer4 = m.layer4   # 512, 1/32
+
+    def forward(self, x):
+        x = self.stem(x)
+        c1 = self.layer1(x)
+        c2 = self.layer2(c1)
+        c3 = self.layer3(c2)
+        c4 = self.layer4(c3)
+        return c1, c2, c3, c4
+
+
+class ResNet50Pre(nn.Module):
+    """ ImageNet 预训练 ResNet50 """
+    def __init__(self):
+        super().__init__()
+        m = resnet50(weights=ResNet50_Weights.IMAGENET1K_V1)
+
+        self.stem = nn.Sequential(
+            m.conv1, m.bn1, m.relu, m.maxpool
+        )
+        self.layer1 = m.layer1   # 256, 1/4
+        self.layer2 = m.layer2   # 512, 1/8
+        self.layer3 = m.layer3   # 1024, 1/16
+        self.layer4 = m.layer4   # 2048, 1/32
 
     def forward(self, x):
         x = self.stem(x)

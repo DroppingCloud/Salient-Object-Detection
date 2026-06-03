@@ -2,11 +2,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .resnet18 import ResNet18, ResNet18Pre
-
 from .poolnet import (
-    ResNet18Locate, ConvertLayer, DeepPoolLayer, ScoreLayer,
-    _IN_CH, _OUT_CH, _DP_IN, _DP_OUT, _DP_X2, _DP_FUSE,
+    ResNetLocate, ConvertLayer, DeepPoolLayer, ScoreLayer,
+    _BACKBONE_TABLE, _get_decoder_cfg, _DP_X2, _DP_FUSE,
 )
 
 class CFM(nn.Module):
@@ -83,19 +81,22 @@ class DeepPoolLayerCFM(nn.Module):
 
 class PoolNetCFM(nn.Module):
 
-    def __init__(self, pretrained=True):
+    def __init__(self, pretrained=True, backbone_name="resnet18"):
         super().__init__()
-        self.base     = ResNet18Locate(pretrained=pretrained)
+        cfg = _get_decoder_cfg(backbone_name)
+
+        self.base     = ResNetLocate(pretrained=pretrained, backbone_name=backbone_name)
         self.backbone = self.base.backbone
 
-        self.convert = ConvertLayer(_IN_CH, _OUT_CH)
+        channels = _BACKBONE_TABLE[backbone_name][2]
+        self.convert = ConvertLayer(channels, cfg["out_ch"])
 
         self.deep_pool = nn.ModuleList([
-            DeepPoolLayerCFM(_DP_IN[i], _DP_OUT[i], _DP_X2[i], _DP_FUSE[i])
+            DeepPoolLayerCFM(cfg["dp_in"][i], cfg["dp_out"][i], _DP_X2[i], _DP_FUSE[i])
             for i in range(4)
         ])
 
-        self.score = ScoreLayer(128)
+        self.score = ScoreLayer(cfg["dp_out"][-1])
 
         self._init_weights()
 

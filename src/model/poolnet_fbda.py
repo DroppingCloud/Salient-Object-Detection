@@ -3,8 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from .poolnet import (
-    ResNet18Locate, ConvertLayer, DeepPoolLayer, ScoreLayer,
-    _IN_CH, _OUT_CH, _DP_IN, _DP_OUT, _DP_X2, _DP_FUSE,
+    ResNetLocate, ConvertLayer, DeepPoolLayer, ScoreLayer,
+    _BACKBONE_TABLE, _get_decoder_cfg, _DP_X2, _DP_FUSE,
 )
 
 class ChannelAttention(nn.Module):
@@ -76,24 +76,27 @@ class FBDA(nn.Module):
 
 class PoolNetFBDA(nn.Module):
 
-    def __init__(self, pretrained=True):
+    def __init__(self, pretrained=True, backbone_name="resnet18"):
         super().__init__()
-        self.base     = ResNet18Locate(pretrained=pretrained)
+        cfg = _get_decoder_cfg(backbone_name)
+
+        self.base     = ResNetLocate(pretrained=pretrained, backbone_name=backbone_name)
         self.backbone = self.base.backbone
 
-        self.convert = ConvertLayer(_IN_CH, _OUT_CH)
+        channels = _BACKBONE_TABLE[backbone_name][2]
+        self.convert = ConvertLayer(channels, cfg["out_ch"])
 
         self.deep_pool = nn.ModuleList([
-            DeepPoolLayer(_DP_IN[i], _DP_OUT[i], _DP_X2[i], _DP_FUSE[i])
+            DeepPoolLayer(cfg["dp_in"][i], cfg["dp_out"][i], _DP_X2[i], _DP_FUSE[i])
             for i in range(4)
         ])
 
-        # FBDA 插入在 deep_pool[0/1/2] 之后（输出通道分别为 256, 256, 128）
-        self.fbda0 = FBDA(_DP_OUT[0])   # 256ch
-        self.fbda1 = FBDA(_DP_OUT[1])   # 256ch
-        self.fbda2 = FBDA(_DP_OUT[2])   # 128ch
+        # FBDA 插入在 deep_pool[0/1/2] 之后
+        self.fbda0 = FBDA(cfg["dp_out"][0])
+        self.fbda1 = FBDA(cfg["dp_out"][1])
+        self.fbda2 = FBDA(cfg["dp_out"][2])
 
-        self.score = ScoreLayer(128)
+        self.score = ScoreLayer(cfg["dp_out"][-1])
 
         self._init_weights()
 

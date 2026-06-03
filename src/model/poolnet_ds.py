@@ -2,8 +2,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from .poolnet import (
-    ResNet18Locate, ConvertLayer, DeepPoolLayer, ScoreLayer,
-    _IN_CH, _OUT_CH, _DP_IN, _DP_OUT, _DP_X2, _DP_FUSE,
+    ResNetLocate, ConvertLayer, DeepPoolLayer, ScoreLayer,
+    _BACKBONE_TABLE, _get_decoder_cfg, _DP_X2, _DP_FUSE,
 )
 
 
@@ -27,24 +27,27 @@ class SideHead(nn.Module):
 class PoolNetDS(nn.Module):
 
     loss_weights = (1.0, 0.4, 0.2)
-    simple_aux_loss = True   
+    simple_aux_loss = True
 
-    def __init__(self, pretrained=True):
+    def __init__(self, pretrained=True, backbone_name="resnet18"):
         super().__init__()
-        self.base     = ResNet18Locate(pretrained=pretrained)
+        cfg = _get_decoder_cfg(backbone_name)
+
+        self.base     = ResNetLocate(pretrained=pretrained, backbone_name=backbone_name)
         self.backbone = self.base.backbone
 
-        self.convert = ConvertLayer(_IN_CH, _OUT_CH)
+        channels = _BACKBONE_TABLE[backbone_name][2]
+        self.convert = ConvertLayer(channels, cfg["out_ch"])
 
         self.deep_pool = nn.ModuleList([
-            DeepPoolLayer(_DP_IN[i], _DP_OUT[i], _DP_X2[i], _DP_FUSE[i])
+            DeepPoolLayer(cfg["dp_in"][i], cfg["dp_out"][i], _DP_X2[i], _DP_FUSE[i])
             for i in range(4)
         ])
 
-        self.score = ScoreLayer(128)
+        self.score = ScoreLayer(cfg["dp_out"][-1])
 
-        self.side1 = SideHead(256)   # deep_pool[1] 输出通道
-        self.side2 = SideHead(128)   # deep_pool[2] 输出通道
+        self.side1 = SideHead(cfg["dp_out"][1])   # deep_pool[1] 输出通道
+        self.side2 = SideHead(cfg["dp_out"][2])   # deep_pool[2] 输出通道
 
         self._init_weights()
 

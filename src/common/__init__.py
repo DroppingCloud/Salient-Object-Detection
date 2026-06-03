@@ -6,6 +6,7 @@ from .visualization import (
     visualize_predictions_with_error,
 )
 from . import config
+from . import distributed
 
 __all__ = [
     # ----------- 数据 -----------
@@ -21,4 +22,5 @@ __all__ = [
 
     # ----------- 配置 -----------
     "config",
+    "distributed",
 ]

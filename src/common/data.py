@@ -4,6 +4,7 @@ from pathlib import Path
 
 import torch
 from torch.utils.data import Dataset, DataLoader, random_split, Subset
+from torch.utils.data.distributed import DistributedSampler
 from torchvision import transforms
 from torchvision.transforms import functional as TF
 from torchvision.transforms import InterpolationMode
@@ -142,6 +143,7 @@ def build_saliency_dataloader(
     batch_size=None,
     num_workers=None,
     seed=None,
+    distributed=False,
 ):
     if image_folder is None:
         from .config import IMAGE_FOLDER as image_folder
@@ -199,10 +201,18 @@ def build_saliency_dataloader(
     train_dataset = torch.utils.data.Subset(train_dataset, train_subset.indices)
     val_dataset = torch.utils.data.Subset(val_dataset, val_subset.indices)
 
+    train_sampler = DistributedSampler(
+        train_dataset,
+        shuffle=True,
+        seed=seed,
+        drop_last=False,
+    ) if distributed else None
+
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
-        shuffle=True,
+        shuffle=train_sampler is None,
+        sampler=train_sampler,
         num_workers=num_workers,
         pin_memory=True,
     )

@@ -299,14 +299,16 @@ rulesepcolor= \color{ red!20!green!20!blue!20}
 \end{figure}
 
 %----------------------------------------------------------------
-\subsubsection{ResNet18}
+\subsubsection{网络结构}
 
-ResNet18 是一种轻量级残差网络（图 \ref{fig:resnet}），主要由初始卷积层、最大池化层、四个残差阶段、全局平均池化层和全连接层组成。
-在显著目标检测等密集预测任务中，通常去除最后的池化层和全连接层，仅保留卷积主干作为特征提取器。
+ResNet 通常由一个初始卷积层和若干个残差阶段组成（图~\ref{fig:resnet}）。以 ImageNet 版 ResNet 为例，
+输入图像先经过 7×7 conv + BN + ReLU + maxpool 得到低层特征，然后依次经历 layer1、layer2、layer3、layer4 四个残差阶段。
+
+每个阶段由多个残差块组成，空间分辨率逐步下降，通道数逐步增加。一般情况下，ResNet18/34 使用 BasicBlock，ResNet50/101 使用更深的 Bottleneck Block。
 
 \begin{figure}[t]
   \centering
-  \includegraphics[width=0.8\textwidth]{fig/resnet2.png}
+  \includegraphics[width=0.8\textwidth]{fig/resnet3.png}
   \caption{ResNet 网络结构}
   \label{fig:resnet}
 \end{figure}
@@ -324,8 +326,6 @@ ResNet18 是一种轻量级残差网络（图 \ref{fig:resnet}），主要由初
 \end{align*}
 
 其中 $C1, C2, C3, C4$ 表示解码器输出的各层级特征，$D(\cdot)$ 表示解码器，$S$ 表示输出显著图。
-
-使用 ResNet18 作为显著目标检测骨干时，模型具有参数量小、计算成本低、训练稳定等优点。但由于 ResNet18 网络较浅，其高层语义表达和全局上下文建模能力较弱。因此，在基于 ResNet18 的显著目标检测网络中，通常需要通过多尺度特征融合、上下文增强、注意力机制或深监督等方式弥补骨干网络表达能力不足的问题。
 
 % ----------------------------------------------------------------
 \subsection{PoolNet}

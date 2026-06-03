@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from .f3net import CFI, FFM, _cbr
-from .resnet18 import ResNet18, ResNet18Pre
+from .poolnet import _get_backbone, _BACKBONE_TABLE
 
 
 # ─────────────────────────────────────────────────────────────
@@ -89,30 +89,31 @@ class F3NetCBAM(nn.Module):
       - out_aux ：Path-1 粗粒度输出（权重 1.0）
     """
 
-    def __init__(self, mid_ch=128, pretrained=True):
+    def __init__(self, mid_ch=128, pretrained=True, backbone_name="resnet18"):
         super().__init__()
-        self.backbone = ResNet18Pre() if pretrained else ResNet18()
+        self.backbone, channels = _get_backbone(backbone_name, pretrained)
+        ch1, ch2, ch3, ch4 = channels
 
         # ── Path 1: 粗粒度解码器 ────────────────────────────────────
-        self.cfi1_43 = CFI(512, 256, mid_ch)
+        self.cfi1_43 = CFI(ch4, ch3, mid_ch)
         self.cbam1_3 = CBAM(mid_ch)
 
-        self.cfi1_32 = CFI(mid_ch, 128, mid_ch)
+        self.cfi1_32 = CFI(mid_ch, ch2, mid_ch)
         self.cbam1_2 = CBAM(mid_ch)
 
-        self.cfi1_21 = CFI(mid_ch, 64, mid_ch)
+        self.cfi1_21 = CFI(mid_ch, ch1, mid_ch)
         self.cbam1_1 = CBAM(mid_ch)
 
         # ── Path 2: 精细化解码器（含来自 Path-1 的反馈） ────────────
-        self.cfi2_43 = CFI(512, 256, mid_ch)
+        self.cfi2_43 = CFI(ch4, ch3, mid_ch)
         self.ffm_3   = FFM(mid_ch)
         self.cbam2_3 = CBAM(mid_ch)
 
-        self.cfi2_32 = CFI(mid_ch, 128, mid_ch)
+        self.cfi2_32 = CFI(mid_ch, ch2, mid_ch)
         self.ffm_2   = FFM(mid_ch)
         self.cbam2_2 = CBAM(mid_ch)
 
-        self.cfi2_21 = CFI(mid_ch, 64, mid_ch)
+        self.cfi2_21 = CFI(mid_ch, ch1, mid_ch)
         self.ffm_1   = FFM(mid_ch)
         self.cbam2_1 = CBAM(mid_ch)
 

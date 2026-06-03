@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .resnet18 import ResNet18, ResNet18Pre
+from .poolnet import _get_backbone, _BACKBONE_TABLE
 
 
 def _cbr(in_ch, out_ch, k=3, p=1):
@@ -85,23 +85,23 @@ class F3Net(nn.Module):
     weight 2.0 to out_main and 1.0 to out_aux.
     """
 
-    def __init__(self, mid_ch=128, pretrained=True):
+    def __init__(self, mid_ch=128, pretrained=True, backbone_name="resnet18"):
         super().__init__()
-        self.backbone = ResNet18Pre() if pretrained else ResNet18()
-        # c1: 64ch H/4 | c2: 128ch H/8 | c3: 256ch H/16 | c4: 512ch H/32
+        self.backbone, channels = _get_backbone(backbone_name, pretrained)
+        ch1, ch2, ch3, ch4 = channels
 
         # ── Path 1: coarse top-down decoder ──────────────────────────────
-        self.cfi1_43 = CFI(512, 256, mid_ch)   # c4 × c3  → H/16
-        self.cfi1_32 = CFI(mid_ch, 128, mid_ch) # p1_3 × c2 → H/8
-        self.cfi1_21 = CFI(mid_ch, 64, mid_ch)  # p1_2 × c1 → H/4
+        self.cfi1_43 = CFI(ch4, ch3, mid_ch)
+        self.cfi1_32 = CFI(mid_ch, ch2, mid_ch)
+        self.cfi1_21 = CFI(mid_ch, ch1, mid_ch)
 
         # ── Path 2: refined decoder with feedback from Path 1 ────────────
-        self.cfi2_43 = CFI(512, 256, mid_ch)
-        self.ffm_3   = FFM(mid_ch)               # fuse cfi2_43 ← p1_3
-        self.cfi2_32 = CFI(mid_ch, 128, mid_ch)
-        self.ffm_2   = FFM(mid_ch)               # fuse cfi2_32 ← p1_2
-        self.cfi2_21 = CFI(mid_ch, 64, mid_ch)
-        self.ffm_1   = FFM(mid_ch)               # fuse cfi2_21 ← p1_1
+        self.cfi2_43 = CFI(ch4, ch3, mid_ch)
+        self.ffm_3   = FFM(mid_ch)
+        self.cfi2_32 = CFI(mid_ch, ch2, mid_ch)
+        self.ffm_2   = FFM(mid_ch)
+        self.cfi2_21 = CFI(mid_ch, ch1, mid_ch)
+        self.ffm_1   = FFM(mid_ch)
 
         # ── Output heads ─────────────────────────────────────────────────
         self.head_main = nn.Conv2d(mid_ch, 1, 1)

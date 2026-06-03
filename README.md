@@ -12,6 +12,7 @@ Final/
 │   │   ├── __init__.py
 │   │   ├── config.py            # 全局配置（路径、超参数、平台切换）
 │   │   ├── data.py              # 数据集构建、数据增强、DataLoader
+│   │   ├── distributed.py       # 单卡/多卡训练评估工具
 │   │   ├── train.py             # Trainer 训练与验证循环
 │   │   └── visualization.py     # 训练曲线和预测结果可视化
 │   └── model/                   # 模型定义
@@ -62,14 +63,21 @@ Final/
 # 训练并评估指定模型（默认 PoolNetCFM）
 bash run.sh PoolNetCFM
 
+# 一键执行脚本
+bash run.sh PoolNetCFM multi        # 多卡
+bash run.sh PoolNetCFM single       # 单卡
+
 # 单独训练
-python src/main.py --model PoolNetCFMRRM
+python src/main.py --model PoolNetCFM
+
+# 单独多卡训练
+python -m torch.distributed.run --standalone --nproc_per_node=2 src/main.py --model PoolNetCFM
 
 # 单独评估
-python src/eval.py --model PoolNetCFMRRM
+python src/eval.py --model PoolNetCFM
 
 # Top-K 预测可视化
-python src/topk_predict.py --model PoolNetCFMRRM --topk 5 --metric adpF
+python src/topk_predict.py --model PoolNetCFM --topk 5 --metric mae
 ```
 
 ## 可用模型
@@ -79,20 +87,8 @@ python src/topk_predict.py --model PoolNetCFMRRM --topk 5 --metric adpF
 | PoolNet | 基线模型 |
 | PoolNetCFM | + Cross-level Feature Module |
 | PoolNetDS | + Deep Supervision |
-| PoolNetCFMDS | + CFM + Deep Supervision |
 | PoolNetFBDA | + Feature-level Boundary-aware DA |
-| PoolNetCFMFBDA | + CFM + FBDA |
-| PoolNetCFMDSFBDA | + CFM + DS + FBDA |
-| PoolNetRRM | + Residual Refinement Module |
-| PoolNetCFMRRM | + CFM + RRM |
-| PoolNetCA | + Channel Attention |
-| PoolNetCFMCARRM | + CFM + CA + RRM |
-| PoolNetCFMGA | + CFM + Global Attention |
 | CPDResNet | Cascaded Partial Decoder |
 | F3Net | F3Net 基线 |
 | F3NetCBAM | + CBAM 注意力模块 |
 | F3NetASPP | + ASPP 空洞空间金字塔池化 |
-
-## 配置
-
-训练超参数和路径配置见 `src/common/config.py`，支持 Local / Colab / AutoDL 三种平台切换。

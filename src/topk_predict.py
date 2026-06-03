@@ -2,10 +2,10 @@
 加载指定模型权重，对测试集进行推理，返回预测效果最好的 Top-K 张掩码并标注原图
 
 用法:
-    python src/topk_predict.py --model PoolNetCFMRRM --ckpt outputs/PoolNetCFMRRM/best_model.pth --topk 10
-    python src/topk_predict.py --model PoolNetCFMRRM --topk 5 --metric adpF
-    python src/topk_predict.py --model PoolNetCFMRRM --topk 5 --metric mae
-    python src/topk_predict.py --model PoolNetCFMRRM --topk 5 --metric sm
+    python src/topk_predict.py --model PoolNetCFM --ckpt outputs/PoolNetCFM/best_model.pth --topk 10
+    python src/topk_predict.py --model PoolNetCFM --topk 5 --metric adpF
+    python src/topk_predict.py --model PoolNetCFM --topk 5 --metric mae
+    python src/topk_predict.py --model PoolNetCFM --topk 5 --metric sm
 """
 
 import os

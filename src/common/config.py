@@ -3,12 +3,9 @@ import torch
 
 from model import (
     F3Net, F3NetASPP, F3NetCBAM,
-    PoolNet, PoolNetCFM, PoolNetDS, PoolNetCFMDS, PoolNetFBDA,
-    PoolNetCFMDSFBDA, PoolNetCFMFBDA,
-    PoolNetRRM, PoolNetCFMRRM,
-    PoolNetCA, PoolNetCFMCARRM,
-    PoolNetCFMGA,
+    PoolNet, PoolNetCFM, PoolNetDS, PoolNetFBDA,
     CPDResNet,
+    ResNet18, ResNet18Pre, ResNet34Pre, ResNet50Pre,
 )
 
 # ──────────────────────────────────────────
@@ -18,15 +15,7 @@ MODEL_REGISTRY = {
     "PoolNet": PoolNet,
     "PoolNetCFM": PoolNetCFM,
     "PoolNetDS": PoolNetDS,
-    "PoolNetCFMDS": PoolNetCFMDS,
     "PoolNetFBDA": PoolNetFBDA,
-    "PoolNetCFMFBDA": PoolNetCFMFBDA,
-    "PoolNetCFMDSFBDA": PoolNetCFMDSFBDA,
-    "PoolNetRRM": PoolNetRRM,
-    "PoolNetCFMRRM": PoolNetCFMRRM,
-    "PoolNetCA": PoolNetCA,
-    "PoolNetCFMCARRM": PoolNetCFMCARRM,
-    "PoolNetCFMGA": PoolNetCFMGA,
     "CPDResNet": CPDResNet,
     "F3Net": F3Net,
     "F3NetCBAM": F3NetCBAM,
@@ -34,10 +23,47 @@ MODEL_REGISTRY = {
 }
 
 # ──────────────────────────────────────────
+# Backbone 配置
+# ──────────────────────────────────────────
+BACKBONE_REGISTRY = {
+    "resnet18": {
+        "pretrained": ResNet18Pre,
+        "scratch": ResNet18,
+        "channels": [64, 128, 256, 512],
+    },
+    "resnet34": {
+        "pretrained": ResNet34Pre,
+        "scratch": None,
+        "channels": [64, 128, 256, 512],
+    },
+    "resnet50": {
+        "pretrained": ResNet50Pre,
+        "scratch": None,
+        "channels": [256, 512, 1024, 2048],
+    },
+}
+
+BACKBONE = "resnet18"   # 切换 backbone: "resnet18" | "resnet34" | "resnet50"
+
+# ──────────────────────────────────────────
 # 路径
 # ──────────────────────────────────────────
 _SRC_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # src/
 _PROJECT_ROOT = os.path.dirname(_SRC_DIR)
+
+
+def _env_bool(name, default):
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _env_gpu_ids(default):
+    value = os.environ.get("GPU_IDS")
+    if value is None:
+        return default
+    return [int(item.strip()) for item in value.split(",") if item.strip()]
 
 # 训练平台
 PLATFORM = "AutoDL"   
@@ -78,11 +104,25 @@ IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD  = [0.229, 0.224, 0.225]
 
 # ──────────────────────────────────────────
+# 单卡 / 多卡控制
+# ──────────────────────────────────────────
+MULTI_GPU          = _env_bool("MULTI_GPU", True)
+GPU_IDS            = _env_gpu_ids([0, 1])
+DIST_BACKEND       = "nccl"
+EVAL_USE_MULTI_GPU = _env_bool("EVAL_USE_MULTI_GPU", False)
+USE_AMP            = _env_bool("USE_AMP", False)
+
+GLOBAL_BATCH_SIZE  = 256 if SCALING and MULTI_GPU else 64 if SCALING else 16
+_WORLD_SIZE        = int(os.environ.get("WORLD_SIZE", "1"))
+_BATCH_SPLIT_SIZE  = len(GPU_IDS) if MULTI_GPU and GPU_IDS and _WORLD_SIZE > 1 else 1
+PER_GPU_BATCH_SIZE = max(1, GLOBAL_BATCH_SIZE // _BATCH_SPLIT_SIZE)
+BATCH_SIZE         = PER_GPU_BATCH_SIZE
+
+# ──────────────────────────────────────────
 # 数据加载
 # ──────────────────────────────────────────
-VAL_RATIO    = 0.3 if SCALING is not True else 0.1
-BATCH_SIZE   = 16 if SCALING is not True else 64
-NUM_WORKERS  = 0
+VAL_RATIO    = 0.1 if SCALING else 0.3
+NUM_WORKERS  = 4 if GLOBAL_BATCH_SIZE else 0
 SEED         = 42
 
 # ──────────────────────────────────────────
@@ -90,7 +130,7 @@ SEED         = 42
 # ──────────────────────────────────────────
 EPOCHS          = 25
 LEARNING_RATE   = 3e-4 if SCALING is not True else 2e-4
-BACKBONE_LR     = 5e-5 if SCALING is not True else 1e-5
+BACKBONE_LR     = 5e-5 if SCALING is not True else 3e-5
 WEIGHT_DECAY    = 5e-4
 LR_ETA_MIN      = 1e-6
 
