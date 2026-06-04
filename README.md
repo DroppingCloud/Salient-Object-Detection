@@ -86,8 +86,6 @@ python src/topk_predict.py --model PoolNetCFM --topk 5 --metric mae
 |--------|------|
 | PoolNet | 基线模型 |
 | PoolNetCFM | + Cross-level Feature Module |
-| PoolNetDS | + Deep Supervision |
-| PoolNetFBDA | + Feature-level Boundary-aware DA |
 | CPDResNet | Cascaded Partial Decoder |
 | F3Net | F3Net 基线 |
 | F3NetCBAM | + CBAM 注意力模块 |

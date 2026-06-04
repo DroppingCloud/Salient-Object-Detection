@@ -493,7 +493,7 @@ def save_val_subset(val_dataset, save_root, max_samples=None, prefix="val_"):
     print(f"  Masks : {mask_save_dir}")
 
 if __name__ == "__main__":
-    root_dir = DATA_ROOT
+    root_dir = "/Users/cloud/Documents/复习/大三下/深度学习/实验/Final/data/DUTS-TR"
 
     dataset, _, train_loader, val_dataset, _ = build_saliency_dataloader(
         root_dir=root_dir,
@@ -520,4 +520,5 @@ if __name__ == "__main__":
         cell_width=220,
     )
 
-    save_val_subset(val_dataset, save_root=TEST_DIR, max_samples=None)
+    # 划分测试集
+    # save_val_subset(val_dataset, save_root=TEST_DIR, max_samples=None)

@@ -3,8 +3,8 @@ import torch
 
 from model import (
     F3Net, F3NetASPP, F3NetCBAM,
-    PoolNet, PoolNetCFM, PoolNetDS, PoolNetFBDA,
-    CPDResNet,
+    PoolNet, PoolNetCFM,
+    CPDResNet, GateNet,
     ResNet18, ResNet18Pre, ResNet34Pre, ResNet50Pre,
 )
 
@@ -14,9 +14,8 @@ from model import (
 MODEL_REGISTRY = {
     "PoolNet": PoolNet,
     "PoolNetCFM": PoolNetCFM,
-    "PoolNetDS": PoolNetDS,
-    "PoolNetFBDA": PoolNetFBDA,
     "CPDResNet": CPDResNet,
+    "GateNet": GateNet,
     "F3Net": F3Net,
     "F3NetCBAM": F3NetCBAM,
     "F3NetASPP": F3NetASPP,
@@ -43,7 +42,7 @@ BACKBONE_REGISTRY = {
     },
 }
 
-BACKBONE = "resnet18"   # 切换 backbone: "resnet18" | "resnet34" | "resnet50"
+BACKBONE = "resnet34"   # 切换 backbone: "resnet18" | "resnet34" | "resnet50"
 
 # ──────────────────────────────────────────
 # 路径
