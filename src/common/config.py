@@ -1,9 +1,11 @@
 import os
+import random
+import numpy as np
 import torch
 
 from model import (
     F3Net, F3NetASPP, F3NetCBAM,
-    PoolNet, PoolNetCFM,
+    PoolNet, PoolNetCFM, PoolNetGate, PoolNetGateCFM,
     CPDResNet, GateNet,
     ResNet18, ResNet18Pre, ResNet34Pre, ResNet50Pre,
 )
@@ -14,6 +16,8 @@ from model import (
 MODEL_REGISTRY = {
     "PoolNet": PoolNet,
     "PoolNetCFM": PoolNetCFM,
+    "PoolNetGate": PoolNetGate,
+    "PoolNetGateCFM": PoolNetGateCFM,
     "CPDResNet": CPDResNet,
     "GateNet": GateNet,
     "F3Net": F3Net,
@@ -121,8 +125,18 @@ BATCH_SIZE         = PER_GPU_BATCH_SIZE
 # 数据加载
 # ──────────────────────────────────────────
 VAL_RATIO    = 0.1 if SCALING else 0.3
-NUM_WORKERS  = 4 if GLOBAL_BATCH_SIZE else 0
+NUM_WORKERS  = 8 if GLOBAL_BATCH_SIZE else 0
 SEED         = 42
+
+# ──────────────────────────────────────────
+# 固定随机种子 (保证参数初始化可复现)
+# ──────────────────────────────────────────
+random.seed(SEED)
+np.random.seed(SEED)
+torch.manual_seed(SEED)
+torch.cuda.manual_seed_all(SEED)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
 
 # ──────────────────────────────────────────
 # 训练

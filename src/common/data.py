@@ -420,6 +420,9 @@ def show_samples_by_size(
     plt.show()
 
 def save_val_subset(val_dataset, save_root, max_samples=None, prefix="val_"):
+    """
+    保存验证集/测试集划分结果，保持原始图像和 mask 尺寸不变。
+    """
 
     save_root = Path(save_root)
     image_save_dir = save_root / "images"
@@ -439,61 +442,27 @@ def save_val_subset(val_dataset, save_root, max_samples=None, prefix="val_"):
     if max_samples is not None:
         indices = indices[:max_samples]
 
-    for count, idx in enumerate(indices, 1):
-        sample = dataset[idx]
+    for idx in indices:
+        image_path = dataset.image_paths[idx]
+        mask_path = dataset.mask_paths[idx]
 
-        image = sample["image"]
-        mask = sample["mask"]
+        image = Image.open(image_path).convert("RGB")
+        mask = Image.open(mask_path).convert("L")
 
-        # -------------------------
-        # image: tensor -> PIL RGB
-        # -------------------------
-        if isinstance(image, torch.Tensor):
-            image = image.detach().cpu()
+        stem = Path(image_path).stem
 
-            # 如果 image 是经过 ImageNet normalize 的，需要反归一化
-            mean = torch.tensor(IMAGENET_MEAN).view(3, 1, 1)
-            std = torch.tensor(IMAGENET_STD).view(3, 1, 1)
-            image = image * std + mean
+        image_save_path = image_save_dir / f"{stem}.jpg"
+        mask_save_path = mask_save_dir / f"{stem}.png"
 
-            image = image.clamp(0, 1)
-            image = TF.to_pil_image(image)
+        image.save(image_save_path, quality=95)
+        mask.save(mask_save_path)
 
-        image = image.convert("RGB")
-
-        # -------------------------
-        # mask: tensor -> PIL L, 0/255
-        # -------------------------
-        if isinstance(mask, torch.Tensor):
-            mask = mask.detach().cpu().squeeze()
-            mask = (mask > 0.5).numpy().astype(np.uint8) * 255
-            mask = Image.fromarray(mask, mode="L")
-        else:
-            mask = mask.convert("L")
-            mask = np.array(mask)
-            mask = (mask > 127).astype(np.uint8) * 255
-            mask = Image.fromarray(mask, mode="L")
-
-        # -------------------------
-        # 文件名：image 保存 jpg，mask 保存 png
-        # -------------------------
-        if hasattr(dataset, "image_paths"):
-            stem = Path(dataset.image_paths[idx]).stem
-        else:
-            stem = f"{prefix}{idx}"
-
-        image_name = f"{stem}.jpg"
-        mask_name = f"{stem}.png"
-
-        image.save(image_save_dir / image_name, quality=95)
-        mask.save(mask_save_dir / mask_name)
-
-    print(f"Saved {len(indices)} samples to:")
+    print(f"Saved {len(indices)} original-size samples to:")
     print(f"  Images: {image_save_dir}")
     print(f"  Masks : {mask_save_dir}")
 
 if __name__ == "__main__":
-    root_dir = "/Users/cloud/Documents/复习/大三下/深度学习/实验/Final/data/DUTS-TR"
+    root_dir = DATA_ROOT
 
     dataset, _, train_loader, val_dataset, _ = build_saliency_dataloader(
         root_dir=root_dir,
@@ -521,4 +490,4 @@ if __name__ == "__main__":
     )
 
     # 划分测试集
-    # save_val_subset(val_dataset, save_root=TEST_DIR, max_samples=None)
+    save_val_subset(val_dataset, save_root=TEST_DIR, max_samples=None)
