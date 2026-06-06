@@ -8,7 +8,7 @@ from .f3net import F3Net
 from .f3net_cbam import F3NetCBAM
 from .f3net_aspp import F3NetASPP
 
-from .cpd import CPDResNet
+from .cpd_new import CPDResNet
 from .gatenet import GateNet
 
 __all__ = [
