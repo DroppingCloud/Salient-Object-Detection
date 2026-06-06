@@ -77,6 +77,7 @@ class RefineUNet(nn.Module):
 class BASNet(nn.Module):
     def __init__(self, n_channels=3, n_classes=1):
         super().__init__()
+        self.loss_mode = "basnet_bsi"
 
         # ------------------------------------------------------------------
         # Encoder
@@ -166,6 +167,15 @@ class BASNet(nn.Module):
         # ------------------------------------------------------------------
         self.refine = RefineUNet(in_ch=1, base_ch=64)
 
+    @property
+    def backbone(self):
+        return nn.ModuleList([
+            self.encoder1,
+            self.encoder2,
+            self.encoder3,
+            self.encoder4,
+        ])
+
     @staticmethod
     def _dec_block(in_ch, mid_ch, out_ch, dilated=False):
         d, p = (2, 2) if dilated else (1, 1)
@@ -179,6 +189,8 @@ class BASNet(nn.Module):
         )
 
     def forward(self, x):
+        out_size = x.shape[-2:]
+
         # ---- 编码 ----
         h0 = self.stem(x)                   # 256, 64ch
 
@@ -202,24 +214,24 @@ class BASNet(nn.Module):
         hd1 = self.dec1(torch.cat([self.up2(hd2),   h1], dim=1))           # 256
 
         # ---- 侧输出 ----
-        db = self.up_b(self.side_b(hb))     # bridge
-        d6 = self.up6(self.side6(hd6))
-        d5 = self.up5(self.side5(hd5))
-        d4 = self.up4(self.side4(hd4))
-        d3 = self.up3(self.side3(hd3))
-        d2 = self.up_d2(self.side2(hd2))
+        db = F.interpolate(self.side_b(hb), size=out_size, mode="bilinear", align_corners=False)
+        d6 = F.interpolate(self.side6(hd6), size=out_size, mode="bilinear", align_corners=False)
+        d5 = F.interpolate(self.side5(hd5), size=out_size, mode="bilinear", align_corners=False)
+        d4 = F.interpolate(self.side4(hd4), size=out_size, mode="bilinear", align_corners=False)
+        d3 = F.interpolate(self.side3(hd3), size=out_size, mode="bilinear", align_corners=False)
+        d2 = F.interpolate(self.side2(hd2), size=out_size, mode="bilinear", align_corners=False)
         d1 = self.side1(hd1)
 
         # ---- 精修 ----
         d_out = self.refine(d1)
 
         return (
-            torch.sigmoid(d_out),   # 最终输出
-            torch.sigmoid(d1),      # 各尺度辅助输出
-            torch.sigmoid(d2),
-            torch.sigmoid(d3),
-            torch.sigmoid(d4),
-            torch.sigmoid(d5),
-            torch.sigmoid(d6),
-            torch.sigmoid(db),
+            d_out,   # 最终输出 logits
+            d1,      # 各尺度辅助输出 logits
+            d2,
+            d3,
+            d4,
+            d5,
+            d6,
+            db,
         )
