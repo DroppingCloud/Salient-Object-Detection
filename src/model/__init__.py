@@ -10,6 +10,7 @@ from .f3net_aspp import F3NetASPP
 
 from .cpd import CPDResNet
 from .gatenet import GateNet
+from .basnet import BASNet
 
 __all__ = [
     # --------- Encoder Backbone ---------
@@ -29,4 +30,5 @@ __all__ = [
 
     "CPDResNet",
     "GateNet",
+    "BASNet",
 ]
