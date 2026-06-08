@@ -4,9 +4,12 @@ import numpy as np
 import torch
 
 from model import (
-    F3Net, F3NetASPP, F3NetCBAM,
+    F3Net, F3NetASPP, F3NetCBAM, F3NetDS, F3NetCFM, F3NetPPM,
     PoolNet, PoolNetCFM, PoolNetGate, PoolNetGateCFM,
-    CPDResNet, GateNet,
+    PoolNetCFI, PoolNetCFM_CBAM, PoolNetRA,
+    CPDResNet,
+    GateNet, GateNetCBAM, GateNetDS,
+    BASNet,
     ResNet18, ResNet18Pre, ResNet34Pre, ResNet50Pre,
 )
 
@@ -18,11 +21,20 @@ MODEL_REGISTRY = {
     "PoolNetCFM": PoolNetCFM,
     "PoolNetGate": PoolNetGate,
     "PoolNetGateCFM": PoolNetGateCFM,
-    "CPDResNet": CPDResNet,
-    "GateNet": GateNet,
+    "PoolNetCFI": PoolNetCFI,
+    "PoolNetCFM_CBAM": PoolNetCFM_CBAM,
+    "PoolNetRA": PoolNetRA,
     "F3Net": F3Net,
     "F3NetCBAM": F3NetCBAM,
     "F3NetASPP": F3NetASPP,
+    "F3NetDS": F3NetDS,
+    "F3NetCFM": F3NetCFM,
+    "F3NetPPM": F3NetPPM,
+    "CPDResNet": CPDResNet,
+    "GateNet": GateNet,
+    "GateNetCBAM": GateNetCBAM,
+    "GateNetDS": GateNetDS,
+    "BASNet": BASNet,
 }
 
 # ──────────────────────────────────────────
