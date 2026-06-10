@@ -15,6 +15,8 @@ from .f3net_cfm import F3NetCFM
 from .f3net_ppm import F3NetPPM
 
 from .cpd import CPDResNet
+from .CPD_aspp import CPDASPP
+from .CPD_cbam import CPDCBAM
 from .gatenet import GateNet
 from .gatenet_cbam import GateNetCBAM
 from .gatenet_ds import GateNetDS
@@ -43,6 +45,8 @@ __all__ = [
     "F3NetPPM",
 
     "CPDResNet",
+    "CPDASPP",
+    "CPDCBAM",
     "GateNet",
     "GateNetCBAM",
     "GateNetDS",
