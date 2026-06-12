@@ -3,7 +3,6 @@ import copy
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchvision.models import ResNet50_Weights, resnet50
 
 
 class BasicConv2d(nn.Module):
@@ -138,22 +137,23 @@ class HolisticAttention(nn.Module):
         return features * torch.maximum(soft_attention, attention_map)
 
 
-class B2ResNet50(nn.Module):
-    """ResNet50 with shared shallow stages and two duplicated deep branches."""
+class B2Backbone(nn.Module):
+    """Wraps any backbone (resnet18/34/50) into the dual-branch CPD structure.
 
-    def __init__(self, pretrained=True):
+    The backbone must expose `stem`, `layer1`, `layer2`, `layer3`, `layer4`.
+    We share stem/layer1/layer2 and duplicate layer3/layer4 for the two branches.
+    """
+
+    def __init__(self, backbone_model):
         super().__init__()
-        weights = ResNet50_Weights.IMAGENET1K_V1 if pretrained else None
-        base = resnet50(weights=weights)
+        self.stem = backbone_model.stem
+        self.layer1 = backbone_model.layer1
+        self.layer2 = backbone_model.layer2
 
-        self.stem = nn.Sequential(base.conv1, base.bn1, base.relu, base.maxpool)
-        self.layer1 = base.layer1
-        self.layer2 = base.layer2
-
-        self.layer3_1 = base.layer3
-        self.layer4_1 = base.layer4
-        self.layer3_2 = copy.deepcopy(base.layer3)
-        self.layer4_2 = copy.deepcopy(base.layer4)
+        self.layer3_1 = backbone_model.layer3
+        self.layer4_1 = backbone_model.layer4
+        self.layer3_2 = copy.deepcopy(backbone_model.layer3)
+        self.layer4_2 = copy.deepcopy(backbone_model.layer4)
 
     def forward_to_layer2(self, x):
         x = self.stem(x)
@@ -162,34 +162,90 @@ class B2ResNet50(nn.Module):
 
 
 class CPDResNet(nn.Module):
-    """Paper-faithful CPD-ResNet50.
+    """CPD adapted to support resnet18 / resnet34 / resnet50 backbones.
 
-    The model returns ``(detection_logits, attention_logits)`` so the existing
-    training/evaluation code uses the final detection branch as the primary map.
+    The backbone is selected via ``backbone_name`` (matches keys in
+    ``BACKBONE_REGISTRY`` in config.py).  Channel widths are inferred
+    automatically from the backbone's feature map sizes.
+
+    Returns ``(detection_logits, attention_logits)`` so existing
+    training/evaluation code uses the detection branch as the primary map.
     """
 
-    def __init__(self, channel=32, pretrained=True, backbone_name="resnet50"):
-        super().__init__()
-        self.backbone_name = "resnet50"
-        self.loss_mode = "cpd_bce"
-        self.backbone = B2ResNet50(pretrained=pretrained)
+    # channel layout: [c1, c2, c3, c4]
+    _CHANNELS = {
+        "resnet18": [64, 128, 256, 512],
+        "resnet34": [64, 128, 256, 512],
+        "resnet50": [256, 512, 1024, 2048],
+    }
 
-        self.rfb2_1 = RFB(512, channel)
-        self.rfb3_1 = RFB(1024, channel)
-        self.rfb4_1 = RFB(2048, channel)
+    def __init__(self, channel=32, pretrained=True, backbone_name=None):
+        super().__init__()
+
+        # ── resolve backbone_name ──────────────────────────────────────────
+        if backbone_name is None:
+            # lazy import to avoid circular dependency at module load time
+            try:
+                from common.config import BACKBONE
+                backbone_name = BACKBONE
+            except Exception:
+                backbone_name = "resnet50"
+
+        self.backbone_name = backbone_name
+        self.loss_mode = "cpd_bce"
+
+        # ── build backbone ────────────────────────────────────────────────
+        backbone_model = self._build_backbone(backbone_name, pretrained)
+        self.backbone = B2Backbone(backbone_model)
+
+        # ── channel widths for this backbone ──────────────────────────────
+        ch = self._CHANNELS[backbone_name]
+        c2, c3, c4 = ch[1], ch[2], ch[3]
+
+        # ── attention branch (branch 1) ───────────────────────────────────
+        self.rfb2_1 = RFB(c2, channel)
+        self.rfb3_1 = RFB(c3, channel)
+        self.rfb4_1 = RFB(c4, channel)
         self.agg1 = Aggregation(channel)
 
         self.ha = HolisticAttention()
 
-        self.rfb2_2 = RFB(512, channel)
-        self.rfb3_2 = RFB(1024, channel)
-        self.rfb4_2 = RFB(2048, channel)
+        # ── detection branch (branch 2) ───────────────────────────────────
+        self.rfb2_2 = RFB(c2, channel)
+        self.rfb3_2 = RFB(c3, channel)
+        self.rfb4_2 = RFB(c4, channel)
         self.agg2 = Aggregation(channel)
 
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _build_backbone(backbone_name: str, pretrained: bool):
+        """Instantiate the right backbone class from resnet.py."""
+        from model.resnet import (
+            ResNet18, ResNet18Pre,
+            ResNet34Pre,
+            ResNet50Pre,
+        )
+
+        if backbone_name == "resnet18":
+            return ResNet18Pre() if pretrained else ResNet18()
+        elif backbone_name == "resnet34":
+            if not pretrained:
+                raise ValueError("resnet34 scratch is not implemented in BACKBONE_REGISTRY")
+            return ResNet34Pre()
+        elif backbone_name == "resnet50":
+            if not pretrained:
+                raise ValueError("resnet50 scratch is not implemented in BACKBONE_REGISTRY")
+            return ResNet50Pre()
+        else:
+            raise ValueError(f"Unsupported backbone_name: {backbone_name!r}. "
+                             "Choose from 'resnet18', 'resnet34', 'resnet50'.")
+
+    # ------------------------------------------------------------------
     def forward(self, x):
         input_size = x.shape[-2:]
         x2 = self.backbone.forward_to_layer2(x)
 
+        # --- attention branch ---
         x3_1 = self.backbone.layer3_1(x2)
         x4_1 = self.backbone.layer4_1(x3_1)
         attention_logits = self.agg1(
@@ -198,25 +254,27 @@ class CPDResNet(nn.Module):
             self.rfb2_1(x2),
         )
 
-        x2_2 = self.ha(torch.sigmoid(attention_logits), x2)
-        x3_2 = self.backbone.layer3_2(x2_2)
+        # --- holistic attention gate ---
+        attention_map = torch.sigmoid(
+            F.interpolate(attention_logits, size=x2.shape[-2:], mode="bilinear", align_corners=True)
+        )
+        x2_attended = self.ha(attention_map, x2)
+
+        # --- detection branch ---
+        x3_2 = self.backbone.layer3_2(x2_attended)
         x4_2 = self.backbone.layer4_2(x3_2)
         detection_logits = self.agg2(
             self.rfb4_2(x4_2),
             self.rfb3_2(x3_2),
-            self.rfb2_2(x2_2),
+            self.rfb2_2(x2_attended),
         )
 
         detection_logits = F.interpolate(
-            detection_logits,
-            size=input_size,
-            mode="bilinear",
-            align_corners=True,
+            detection_logits, size=input_size, mode="bilinear", align_corners=True
         )
         attention_logits = F.interpolate(
-            attention_logits,
-            size=input_size,
-            mode="bilinear",
-            align_corners=True,
+            attention_logits, size=input_size, mode="bilinear", align_corners=True
         )
-        return detection_logits, attention_logits
+        if self.training:
+            return {'main': detection_logits, 'aux_sal': [attention_logits]}
+        return detection_logits

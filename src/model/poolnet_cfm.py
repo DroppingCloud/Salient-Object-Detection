@@ -1,59 +1,54 @@
-import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 from .poolnet import (
-    ResNetLocate, ConvertLayer, DeepPoolLayer, ScoreLayer,
+    ResNetLocate, ConvertLayer, ScoreLayer,
     _BACKBONE_TABLE, _get_decoder_cfg, _DP_X2, _DP_FUSE,
 )
 
 class CFM(nn.Module):
+    """F3Net 风格 CFM：两路各提取 2 层特征，乘法交互后残差回注，双路输出相加"""
+
     def __init__(self, ch):
         super().__init__()
+        # decoder (down) 分支
+        self.conv1d = nn.Conv2d(ch, ch, 3, padding=1, bias=False)
+        self.bn1d = nn.BatchNorm2d(ch)
+        self.conv2d = nn.Conv2d(ch, ch, 3, padding=1, bias=False)
+        self.bn2d = nn.BatchNorm2d(ch)
+        self.conv3d = nn.Conv2d(ch, ch, 3, padding=1, bias=False)
+        self.bn3d = nn.BatchNorm2d(ch)
+        self.conv4d = nn.Conv2d(ch, ch, 3, padding=1, bias=False)
+        self.bn4d = nn.BatchNorm2d(ch)
 
-        def cbr(cin, cout, k=3, p=1):
-            return nn.Sequential(
-                nn.Conv2d(cin, cout, k, padding=p, bias=False),
-                nn.BatchNorm2d(cout),
-                nn.ReLU(inplace=True),
-            )
+        # skip (left) 分支
+        self.conv1l = nn.Conv2d(ch, ch, 3, padding=1, bias=False)
+        self.bn1l = nn.BatchNorm2d(ch)
+        self.conv2l = nn.Conv2d(ch, ch, 3, padding=1, bias=False)
+        self.bn2l = nn.BatchNorm2d(ch)
+        self.conv3l = nn.Conv2d(ch, ch, 3, padding=1, bias=False)
+        self.bn3l = nn.BatchNorm2d(ch)
+        self.conv4l = nn.Conv2d(ch, ch, 3, padding=1, bias=False)
+        self.bn4l = nn.BatchNorm2d(ch)
 
-        self.deep_proj = cbr(ch, ch)
-        self.skip_proj = cbr(ch, ch)
+    def forward(self, down, left):
+        out1d = F.relu(self.bn1d(self.conv1d(down)), inplace=True)
+        out2d = F.relu(self.bn2d(self.conv2d(out1d)), inplace=True)
 
-        self.deep_refine = cbr(ch, ch)
-        self.skip_refine = cbr(ch, ch)
+        out1l = F.relu(self.bn1l(self.conv1l(left)), inplace=True)
+        out2l = F.relu(self.bn2l(self.conv2l(out1l)), inplace=True)
 
-        self.fuse = nn.Sequential(
-            nn.Conv2d(ch * 2, ch, 3, padding=1, bias=False),
-            nn.BatchNorm2d(ch),
-            nn.ReLU(inplace=True),
-        )
+        # 乘法交互
+        fuse = out2d * out2l
 
-        self.info_proj = cbr(ch, ch)
+        # 残差回注 + 精炼
+        out3d = F.relu(self.bn3d(self.conv3d(fuse)), inplace=True) + out1d
+        out4d = F.relu(self.bn4d(self.conv4d(out3d)), inplace=True)
 
-        self.gamma = nn.Parameter(torch.tensor(0.0))
+        out3l = F.relu(self.bn3l(self.conv3l(fuse)), inplace=True) + out1l
+        out4l = F.relu(self.bn4l(self.conv4l(out3l)), inplace=True)
 
-    def forward(self, out, x_skip, x_info):
-        if x_info.shape[-2:] != out.shape[-2:]:
-            x_info = F.interpolate(
-                x_info,
-                size=out.shape[-2:],
-                mode='bilinear',
-                align_corners=True
-            )
-
-        common = self.deep_proj(out) * self.skip_proj(x_skip)
-
-        out_refined = out + self.deep_refine(common)
-        skip_refined = x_skip + self.skip_refine(common)
-
-        fused = self.fuse(torch.cat([out_refined, skip_refined], dim=1))
-
-        base = out + x_skip + x_info
-        enhanced = self.info_proj(fused + x_info)
-
-        return base + self.gamma * enhanced
+        return out4d + out4l
 
 
 class DeepPoolLayerCFM(nn.Module):
@@ -62,22 +57,52 @@ class DeepPoolLayerCFM(nn.Module):
         super().__init__()
         self.need_x2   = need_x2
         self.need_fuse = need_fuse
+        self.pool_scales = [2, 4, 8]
 
-        self.conv_sum = nn.Conv2d(k, k_out, 3, padding=1, bias=False)
+        self.conv_in = nn.Sequential(
+            nn.Conv2d(k, k_out, 3, padding=1, bias=False),
+            nn.ReLU(inplace=True),
+        )
 
         if need_fuse:
             self.cfm = CFM(k_out)
+
+        # FAM
+        self.pool_convs = nn.ModuleList([
+            nn.Sequential(
+                nn.Conv2d(k_out, k_out, 3, padding=1, bias=False),
+                nn.ReLU(inplace=True),
+            )
+            for _ in self.pool_scales
+        ])
+        self.conv_out = nn.Sequential(
+            nn.Conv2d(k_out, k_out, 3, padding=1, bias=False),
+            nn.ReLU(inplace=True),
+        )
+
+    def _adaptive_pool(self, x, scale):
+        h, w = x.shape[2:]
+        return F.adaptive_avg_pool2d(x, (max(1, h // scale), max(1, w // scale)))
+
+    def _fam(self, x):
+        size = x.shape[2:]
+        out = x
+        for scale, conv in zip(self.pool_scales, self.pool_convs):
+            pooled = conv(self._adaptive_pool(x, scale))
+            pooled = F.interpolate(pooled, size, mode='bilinear', align_corners=True)
+            out = out + pooled
+        return self.conv_out(out)
 
     def forward(self, x, x_skip=None, x_info=None):
         if self.need_x2:
             x = F.interpolate(x, x_skip.shape[2:], mode='bilinear', align_corners=True)
 
-        out = self.conv_sum(x)
+        x = self.conv_in(x)
 
         if self.need_fuse:
-            out = self.cfm(out, x_skip, x_info)
+            x = self.cfm(x, x_skip) + x_info
 
-        return out
+        return self._fam(x)
 
 class PoolNetCFM(nn.Module):
 

@@ -217,7 +217,17 @@ def visualize_predictions(
     with torch.no_grad():
         outputs = model(images)
 
-        preds = outputs[0] if isinstance(outputs, (tuple, list)) else outputs
+        # 处理不同模型的输出格式
+        if isinstance(outputs, dict):
+            # F3Net 等模型返回 dict，取 'main' 键
+            preds = outputs.get('main', outputs.get('out', list(outputs.values())[0]))
+        elif isinstance(outputs, (tuple, list)):
+            # 其他模型返回 tuple/list，取第一个
+            preds = outputs[0]
+        else:
+            # 直接返回 tensor
+            preds = outputs
+
         preds = torch.sigmoid(preds)
         preds = (preds >= threshold).float()
 
@@ -283,7 +293,17 @@ def visualize_predictions_with_error(
     with torch.no_grad():
         outputs = model(images)
 
-        preds = outputs[0] if isinstance(outputs, (tuple, list)) else outputs
+        # 处理不同模型的输出格式
+        if isinstance(outputs, dict):
+            # F3Net 等模型返回 dict，取 'main' 键
+            preds = outputs.get('main', outputs.get('out', list(outputs.values())[0]))
+        elif isinstance(outputs, (tuple, list)):
+            # 其他模型返回 tuple/list，取第一个
+            preds = outputs[0]
+        else:
+            # 直接返回 tensor
+            preds = outputs
+
         preds = torch.sigmoid(preds)
         preds = (preds >= threshold).float()
 

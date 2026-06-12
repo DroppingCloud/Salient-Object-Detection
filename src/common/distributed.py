@@ -80,6 +80,7 @@ def wrap_model(model, device, config):
         model,
         device_ids=[device.index],
         output_device=device.index,
+        find_unused_parameters=False,
     )
 
 

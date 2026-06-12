@@ -3,13 +3,14 @@ import json
 from tqdm import tqdm
 
 import torch
+import torch.nn.functional as F
 
 import numpy as np
 from py_sod_metrics import MAE, Fmeasure, Emeasure, Smeasure, WeightedFmeasure
 
 from .config import (
     THRESHOLD, EPS, SCALING,
-    MAIN_LOSS_WEIGHT, AUX_LOSS_WEIGHT, LR_ETA_MIN, USE_AMP,
+    MAIN_LOSS_WEIGHT, AUX_LOSS_WEIGHT, EDGE_LOSS_WEIGHT, LR_ETA_MIN, USE_AMP,
 )
 from . import distributed as dist_utils
 
@@ -74,8 +75,8 @@ class Trainer:
         """
         SSIM Loss
 
-        pred / mask 均为 sigmoid 后的概率图，形状 [B, 1, H, W]，值域 [0, 1]。
-        返回标量 1 - mean_SSIM，值越小表示预测与 GT 结构越相似。
+        pred / mask 均为 sigmoid 后的概率图，形状 [B, 1, H, W]，值域 [0, 1]
+        返回标量 1 - mean_SSIM，值越小表示预测与 GT 结构越相似
         """
         # ── 构造高斯核 ────────────────────────────────────────
         coords = torch.arange(window_size, dtype=pred.dtype, device=pred.device)
@@ -126,25 +127,51 @@ class Trainer:
 
         return bce + ssim + (1.0 - iou)
 
-    def _compute_loss(self, outputs, masks, weights=None, use_aux=True):
-        """ 单输出模型/多输出模型损失计算 """
+    def _edge_loss(self, pred_edge, masks):
+        """ Edge Loss """
+        # Sobel 边缘检测
+        sobel_x = torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]],
+                                dtype=masks.dtype, device=masks.device).view(1, 1, 3, 3)
+        sobel_y = torch.tensor([[-1, -2, -1], [0, 0, 0], [1, 2, 1]],
+                                dtype=masks.dtype, device=masks.device).view(1, 1, 3, 3)
 
-        # 单输出模型损失
-        if not isinstance(outputs, (tuple, list)):
+        edge_x = F.conv2d(masks, sobel_x, padding=1)
+        edge_y = F.conv2d(masks, sobel_y, padding=1)
+        edge_gt = torch.sqrt(edge_x ** 2 + edge_y ** 2 + EPS)
+        # 按样本归一化，保持 batch 维度
+        B = edge_gt.shape[0]
+        e_min = edge_gt.view(B, -1).min(dim=1)[0].view(B, 1, 1, 1)
+        e_max = edge_gt.view(B, -1).max(dim=1)[0].view(B, 1, 1, 1)
+        edge_gt = (edge_gt - e_min) / (e_max - e_min + EPS)
+
+        # BCE loss
+        return self.criterion(pred_edge, edge_gt)
+
+    def _compute_loss(self, outputs, masks):
+        """ 
+        单输出模型/多输出模型损失计算。
+
+        outputs 可以是：
+          - Tensor：单输出模型
+          - dict：键名驱动的多输出，支持以下键：
+              'main'    (必须) 主显著性图
+              'aux_sal' (list) 多尺度辅助显著性图，权重从 AUX_LOSS_WEIGHT 读取
+              'edge'    (list) 边缘预测图，固定权重 0.3
+        """
+
+        # ── 单 Tensor ────────────────────────────────────────────────
+        if not isinstance(outputs, dict):
             return self._compute_bce_ssim_iou_loss(outputs, masks)
 
-        # 主输出
-        loss = MAIN_LOSS_WEIGHT * self._compute_bce_ssim_iou_loss(outputs[0], masks)
+        # ── dict：键名路由 ───────────────────────────────────────────
+        loss = MAIN_LOSS_WEIGHT * self._compute_bce_ssim_iou_loss(outputs['main'], masks)
 
-        # 辅助输出
-        if use_aux and len(outputs) > 1:
-            aux_loss = 0.0
+        for i, out in enumerate(outputs.get('aux_sal', [])):
+            w = AUX_LOSS_WEIGHT[i] if i < len(AUX_LOSS_WEIGHT) else AUX_LOSS_WEIGHT[-1]
+            loss = loss + w * self._compute_bce_iou_loss(out, masks)
 
-            for out in outputs[1:]:
-                aux_loss = aux_loss + self._compute_bce_iou_loss(out, masks)
-
-            aux_loss = aux_loss / max(1, len(outputs) - 1)
-            loss = loss + AUX_LOSS_WEIGHT * aux_loss
+        for out in outputs.get('edge', []):
+            loss = loss + EDGE_LOSS_WEIGHT * self._edge_loss(out, masks)
 
         return loss
 
@@ -171,8 +198,7 @@ class Trainer:
                 outputs = self.model(images)
 
                 # 损失计算
-                weights = getattr(dist_utils.unwrap_model(self.model), 'loss_weights', None)
-                loss = self._compute_loss(outputs, masks, weights=weights)
+                loss = self._compute_loss(outputs, masks)
             total_loss += loss.item() * images.size(0)
             total_samples += images.size(0)
 
@@ -212,12 +238,9 @@ class Trainer:
 
                 with torch.cuda.amp.autocast(enabled=self.use_amp):
                     outputs = self.model(images)
+                    loss = self._compute_loss(outputs, masks)
 
-                    # 验证 loss 仍然按训练损失算
-                    weights = getattr(dist_utils.unwrap_model(self.model), "loss_weights", None)
-                    loss = self._compute_loss(outputs, masks, weights=weights)
-
-                preds = outputs[0] if isinstance(outputs, (tuple, list)) else outputs
+                preds = outputs['main'] if isinstance(outputs, dict) else outputs
 
                 # 如果输出尺寸和 mask 不一致，先对齐
                 if preds.shape[-2:] != masks.shape[-2:]:
@@ -273,7 +296,7 @@ class Trainer:
         return avg_loss, val_metrics
     
     def _save_result(self):                                                                                                                                                                                                                       
-        result_path = os.path.join(self.output_dir, "..", "result_small.json")                                                                                       
+        result_path = os.path.join(self.output_dir, "..", "result.json")                                                                                       
                                                                                                                                                        
         if os.path.exists(result_path):                                                                                                                          
             with open(result_path, "r", encoding="utf-8") as f:                                                                                                  

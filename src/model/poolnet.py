@@ -95,17 +95,15 @@ class ResNetLocate(nn.Module):
         # Backbone 多尺度特征
         c1, c2, c3, c4 = self.backbone(x)               # [64, 128, 256, 512]
 
-        # c4 特征压缩
         p = self.ppms_pre(c4)                         # (B, 256, H/32, W/32)
-        # PPM 生成多尺度增强全局上下文
+        # PPM 多尺度上下文
         xls = [p] + [
             F.interpolate(ppm(p), p.shape[2:], mode='bilinear', align_corners=True)
             for ppm in self.ppms
         ]
-        # 4 路特征拼接: 融合深层语义与全局上下文信息
-        xls = self.ppm_cat(torch.cat(xls, dim=1))     # [B, (256 × 4), H/32, W/32]
+        xls = self.ppm_cat(torch.cat(xls, dim=1))
 
-        # GGF: PPM 特征插值到 layer3/2/1 对应分辨率并投影到对应通道
+        # GGF: PPM 特征插值到 layer3/2/1 对应分辨率
         info3 = self.infos[0](
             F.interpolate(xls, c3.shape[2:], mode='bilinear', align_corners=True)
         )
@@ -142,13 +140,13 @@ class DeepPoolLayer(nn.Module):
         self.need_fuse = need_fuse
         self.pool_scales = [2, 4, 8]
 
-        # 先把输入通道 k 调整到输出通道 k_out
+        # 通道调整
         self.conv_in = nn.Sequential(
             nn.Conv2d(k, k_out, kernel_size=3, padding=1, bias=False),
             nn.ReLU(inplace=True)
         )
 
-        # FAM 的多尺度平均池化分支
+        # FAM 多尺度平均池化分支
         self.pool_convs = nn.ModuleList([
             nn.Sequential(
                 nn.Conv2d(k_out, k_out, kernel_size=3, padding=1, bias=False),
@@ -157,7 +155,7 @@ class DeepPoolLayer(nn.Module):
             for _ in self.pool_scales
         ])
 
-        # 多尺度聚合后的卷积融合
+        # 多尺度聚合融合卷积
         self.conv_out = nn.Sequential(
             nn.Conv2d(k_out, k_out, kernel_size=3, padding=1, bias=False),
             nn.ReLU(inplace=True)
@@ -188,7 +186,6 @@ class DeepPoolLayer(nn.Module):
         return out
 
     def forward(self, x, x_skip=None, x_info=None):
-        # 上采样高层特征到 skip feature 尺寸
         if self.need_x2:
             x = F.interpolate(
                 x,
@@ -197,14 +194,11 @@ class DeepPoolLayer(nn.Module):
                 align_corners=True
             )
 
-        # 通道调整
         x = self.conv_in(x)
 
-        # 融合 skip feature 和 GGF feature
         if self.need_fuse:
             x = x + x_skip + x_info
 
-        # 对融合后的特征做 FAM
         x = self._fam(x)
 
         return x
@@ -218,8 +212,6 @@ class ScoreLayer(nn.Module):
 
     def forward(self, x, target_size=None):
         x = self.score(x)
-
-        # 恢复分辨率
         if target_size is not None:
             x = F.interpolate(x, target_size[2:], mode='bilinear', align_corners=True)
         return x
@@ -229,21 +221,18 @@ class PoolNet(nn.Module):
         super().__init__()
         cfg = _get_decoder_cfg(backbone_name)
 
-        # Encoder 形成多尺度特征与全局上下文信息
         self.base = ResNetLocate(pretrained=pretrained, backbone_name=backbone_name)
         self.backbone = self.base.backbone
 
-        # [c1, c2, c3, c4] 通道调整
         channels = _BACKBONE_TABLE[backbone_name][2]
         self.convert = ConvertLayer(channels, cfg["out_ch"])
 
-        # Decoder 融合不同特征
         self.deep_pool = nn.ModuleList([
             DeepPoolLayer(cfg["dp_in"][i], cfg["dp_out"][i], _DP_X2[i], _DP_FUSE[i])
             for i in range(4)
         ])
 
-        # 输出头（最浅层 dp_out[-1]）
+        # 输出头
         self.score = ScoreLayer(cfg["dp_out"][-1])
 
         self._init_weights()
@@ -258,30 +247,17 @@ class PoolNet(nn.Module):
                     nn.init.zeros_(m.bias)
 
     def forward(self, x):
-        input_size = x.shape   
+        input_size = x.shape
 
-        # ── Backbone + PPM ──
-        # feats: [c1, c2, c3, c4]
-        # infos: [info3, info2, info1]
         feats, infos = self.base(x)
+        feats = self.convert(feats)
+        feats_r = feats[::-1]   # [c4, c3, c2, c1]
 
-        # ── 通道对齐 ──
-        feats = self.convert(feats)   
-
-        # ── 倒序 ──
-        # feats_r: [c4(256), c3(256), c2(256), c1(128)]
-        feats_r = feats[::-1]
-
-        # ── Decode ──
-        # deep_pool[0]: c4 → fuse(c3, info3)
-        # deep_pool[1]: → fuse(c2, info2)
-        # deep_pool[2]: → fuse(c1, info1)
-        # deep_pool[3]: 最浅层，无 fuse
+        # deep_pool[0..2]: 逐级上采样融合 skip+info，deep_pool[3]: 无 fuse
         merge = self.deep_pool[0](feats_r[0], feats_r[1], infos[0])
         for k in range(1, len(feats_r) - 1):
             merge = self.deep_pool[k](merge, feats_r[k + 1], infos[k])
         merge = self.deep_pool[-1](merge)
 
-        # ── 输出显著图 ──
-        out = self.score(merge, input_size)  # (B, 1, H, W)
+        out = self.score(merge, input_size)
         return out

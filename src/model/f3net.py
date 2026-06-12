@@ -144,4 +144,4 @@ class F3Net(nn.Module):
         out_main = F.interpolate(self.head_main(p2_1), (H, W), mode='bilinear', align_corners=True)
         out_aux  = F.interpolate(self.head_aux(p1_1),  (H, W), mode='bilinear', align_corners=True)
 
-        return out_main, out_aux
+        return {'main': out_main, 'aux_sal': [out_aux]}

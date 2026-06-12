@@ -34,7 +34,6 @@ class Evaluator:
         threshold=0.5,
         batch_size=8,
         num_workers=0,
-        crop_size=224,
     ):
         self.model = model
         self.device = device
@@ -55,7 +54,7 @@ class Evaluator:
             os.makedirs(self.save_dir, exist_ok=True)
         dist_utils.barrier()
 
-        transform = JointTransform(train=False, crop_size=crop_size)
+        transform = JointTransform(train=False)
         dataset = SaliencyDataset(
             image_dir=os.path.join(test_dir, "images"),
             mask_dir=os.path.join(test_dir, "masks"),
@@ -149,7 +148,7 @@ class Evaluator:
         if not dist_utils.is_main_process():
             return
 
-        result_path = os.path.join(config.OUTPUT_DIR, "result_scaling.json")
+        result_path = os.path.join(config.OUTPUT_DIR, "..", "result.json")
 
         if os.path.exists(result_path):
             with open(result_path, "r", encoding="utf-8") as f:

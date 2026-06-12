@@ -5,7 +5,6 @@ from pathlib import Path
 import torch
 from torch.utils.data import Dataset, DataLoader, random_split, Subset
 from torch.utils.data.distributed import DistributedSampler
-from torchvision import transforms
 from torchvision.transforms import functional as TF
 from torchvision.transforms import InterpolationMode
 
@@ -14,7 +13,7 @@ from collections import defaultdict, Counter
 import matplotlib.pyplot as plt
 
 from .config import (
-    RESIZE_SIZE, CROP_SIZE, FLIP_PROB, MASK_THRESH,
+    RESIZE_SIZE, FLIP_PROB, MASK_THRESH,
     IMAGENET_MEAN, IMAGENET_STD,
     VAL_RATIO, BATCH_SIZE, NUM_WORKERS, SEED,
     DATA_ROOT, TEST_DIR
@@ -76,14 +75,13 @@ class SaliencyDataset(Dataset):
         return sample
     
 class JointTransform:
-    def __init__(self, train=True, resize_size=RESIZE_SIZE, crop_size=CROP_SIZE):
+    def __init__(self, train=True, resize_size=RESIZE_SIZE):
         self.train = train
         self.resize_size = resize_size
-        self.crop_size = crop_size
 
     def __call__(self, image, mask):
         if self.train:
-            # 缩放到 2256×256
+            # 缩放到 320×320
             image = TF.resize(
                 image,
                 (self.resize_size, self.resize_size),
@@ -95,30 +93,20 @@ class JointTransform:
                 interpolation=InterpolationMode.NEAREST
             )
 
-            # 随机裁剪到 224×224
-            i, j, h, w = transforms.RandomCrop.get_params(
-                image,
-                output_size=(self.crop_size, self.crop_size)
-            )
-
-            image = TF.crop(image, i, j, h, w)
-            mask = TF.crop(mask, i, j, h, w)
-
             # 随机水平翻转
             if torch.rand(1).item() < FLIP_PROB:
                 image = TF.hflip(image)
                 mask = TF.hflip(mask)
 
         else:
-            # 验证/测试阶段不随机裁剪
             image = TF.resize(
                 image,
-                (self.crop_size, self.crop_size),
+                (self.resize_size, self.resize_size),
                 interpolation=InterpolationMode.BILINEAR
             )
             mask = TF.resize(
                 mask,
-                (self.crop_size, self.crop_size),
+                (self.resize_size, self.resize_size),
                 interpolation=InterpolationMode.NEAREST
             )
 
@@ -189,13 +177,13 @@ def build_saliency_dataloader(
     train_dataset = SaliencyDataset(
         image_dir=image_dir,
         mask_dir=mask_dir,
-        transform=JointTransform(train=True, resize_size=256, crop_size=224)
+        transform=JointTransform(train=True, resize_size=RESIZE_SIZE)
     )
 
     val_dataset = SaliencyDataset(
         image_dir=image_dir,
         mask_dir=mask_dir,
-        transform=JointTransform(train=False, resize_size=256, crop_size=224)
+        transform=JointTransform(train=False, resize_size=RESIZE_SIZE)
     )
 
     train_dataset = torch.utils.data.Subset(train_dataset, train_subset.indices)
@@ -421,7 +409,7 @@ def show_samples_by_size(
 
 def save_val_subset(val_dataset, save_root, max_samples=None, prefix="val_"):
     """
-    保存验证集/测试集划分结果，保持原始图像和 mask 尺寸不变。
+    保存验证集/测试集划分结果，保持原始图像和 mask 尺寸不变
     """
 
     save_root = Path(save_root)

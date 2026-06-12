@@ -1,22 +1,3 @@
-"""
-PoolNetGateCFM: PoolNet + 解耦双分支门控 + CFM 跨层交互
-
-在 PoolNetGate (Channel Gate ∥ Spatial Gate → Fuse) 基础上，
-引入 F3Net 风格的 CFM 机制: 用门控净化后的 skip 与 decoder 做
-双分支乘法交互 + 残差回注，实现更深层次的跨层特征融合。
-
-融合流程 (每个 decoder 节点):
-  1. DualGateFusion: Channel Gate ∥ Spatial Gate → concat → conv → gated_skip
-  2. CFM 交互: decoder 和 gated_skip 各经 2 层 conv 后做 element-wise product
-  3. 交互特征残差回注两路，各经 2 层 conv 精炼
-  4. 双路输出相加 + x_info
-  5. FAM 多尺度增强
-
-与 PoolNetGate 的区别:
-  - PoolNetGate: x + gated_skip + info (加法融合)
-  - PoolNetGateCFM: CFM(x, gated_skip) + info (乘法交互融合)
-"""
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -25,6 +6,7 @@ from .poolnet import (
     ResNetLocate, ConvertLayer, ScoreLayer,
     _BACKBONE_TABLE, _get_decoder_cfg, _DP_X2, _DP_FUSE,
 )
+from .poolnet_cfm import CFM
 
 
 # ─────────────────────────────────────────────────────────────
@@ -32,10 +14,7 @@ from .poolnet import (
 # ─────────────────────────────────────────────────────────────
 
 class ChannelGate(nn.Module):
-    """
-    以 decoder 语义为指导，对 skip 各通道加权。
-    decoder GAP → FC → ReLU → FC → Sigmoid → (B, C, 1, 1)
-    """
+    """decoder GAP 生成通道权重，对 skip 各通道加权"""
 
     def __init__(self, ch, reduction=16):
         super().__init__()
@@ -60,10 +39,7 @@ class ChannelGate(nn.Module):
 # ─────────────────────────────────────────────────────────────
 
 class SpatialGate(nn.Module):
-    """
-    空间门控: 对 skip 各位置生成注意力权重。
-    concat(decoder, skip) → 3×3 conv → BN → ReLU → 1×1 → Sigmoid → (B, 1, H, W)
-    """
+    """concat(decoder, skip) → conv → sigmoid，对 skip 各位置加权"""
 
     def __init__(self, decoder_ch, skip_ch):
         super().__init__()
@@ -89,9 +65,7 @@ class SpatialGate(nn.Module):
 # ─────────────────────────────────────────────────────────────
 
 class DualGateFusion(nn.Module):
-    """
-    解耦双分支门控: Channel Gate ∥ Spatial Gate → concat → conv → gated_skip
-    """
+    """Channel Gate ∥ Spatial Gate → concat → conv → gated_skip"""
 
     def __init__(self, ch):
         super().__init__()
@@ -115,20 +89,7 @@ class DualGateFusion(nn.Module):
 # ─────────────────────────────────────────────────────────────
 
 class CFM(nn.Module):
-    """
-    Cross-Feature Module (参考 F3Net 原版实现)。
-
-    输入: decoder 特征 (down) 和 净化后的 skip 特征 (left)
-    流程:
-      down → conv-bn-relu → conv-bn-relu → out2d
-      left → conv-bn-relu → conv-bn-relu → out2l
-      fuse = out2d * out2l                         (乘法交互)
-      out3d = conv-bn-relu(fuse) + out1d           (残差回注 decoder)
-      out4d = conv-bn-relu(out3d)
-      out3l = conv-bn-relu(fuse) + out1l           (残差回注 skip)
-      out4l = conv-bn-relu(out3l)
-    输出: out4d + out4l (双路增强结果相加)
-    """
+    """F3Net 风格 CFM：两路各提取 2 层特征，乘法交互后残差回注，双路输出相加"""
 
     def __init__(self, ch):
         super().__init__()
@@ -153,17 +114,16 @@ class CFM(nn.Module):
         self.bn4l = nn.BatchNorm2d(ch)
 
     def forward(self, down, left):
-        # 各自前 2 层特征提取
         out1d = F.relu(self.bn1d(self.conv1d(down)), inplace=True)
         out2d = F.relu(self.bn2d(self.conv2d(out1d)), inplace=True)
 
         out1l = F.relu(self.bn1l(self.conv1l(left)), inplace=True)
         out2l = F.relu(self.bn2l(self.conv2l(out1l)), inplace=True)
 
-        # 乘法交互: 找到两路共同激活的区域
+        # 乘法交互
         fuse = out2d * out2l
 
-        # 残差回注 + 后 2 层精炼
+        # 残差回注 + 精炼
         out3d = F.relu(self.bn3d(self.conv3d(fuse)), inplace=True) + out1d
         out4d = F.relu(self.bn4d(self.conv4d(out3d)), inplace=True)
 
@@ -178,14 +138,7 @@ class CFM(nn.Module):
 # ─────────────────────────────────────────────────────────────
 
 class DeepPoolLayerGatedCFM(nn.Module):
-    """
-    Decoder 单元:
-      1. 上采样 + 通道调整
-      2. DualGateFusion: 对 skip 做双分支门控净化
-      3. CFM: 净化后的 skip 与 decoder 做跨层乘法交互
-      4. + x_info (全局上下文直接加入)
-      5. FAM 多尺度增强
-    """
+    """Decoder 单元：上采样 → DualGate 净化 skip → CFM 乘法交互 → +info → FAM"""
 
     def __init__(self, k, k_out, need_x2, need_fuse):
         super().__init__()
@@ -193,13 +146,12 @@ class DeepPoolLayerGatedCFM(nn.Module):
         self.need_fuse = need_fuse
         self.pool_scales = [2, 4, 8]
 
-        # 通道调整
         self.conv_in = nn.Sequential(
             nn.Conv2d(k, k_out, 3, padding=1, bias=False),
             nn.ReLU(inplace=True),
         )
 
-        # 门控 + CFM (仅融合节点)
+        # 门控 + CFM（仅融合节点）
         if need_fuse:
             self.dual_gate = DualGateFusion(k_out)
             self.cfm = CFM(k_out)
@@ -238,9 +190,7 @@ class DeepPoolLayerGatedCFM(nn.Module):
         x = self.conv_in(x)
 
         if self.need_fuse:
-            # 双分支门控净化 skip
             gated_skip = self.dual_gate(x, x_skip)
-            # CFM 跨层交互: decoder 与净化后的 skip 做乘法交互
             x = self.cfm(x, gated_skip) + x_info
 
         x = self._fam(x)
@@ -252,11 +202,7 @@ class DeepPoolLayerGatedCFM(nn.Module):
 # ─────────────────────────────────────────────────────────────
 
 class PoolNetGateCFM(nn.Module):
-    """
-    PoolNet + 解耦双分支门控 + CFM。
-
-    Encoder → PPM → ConvertLayer → Decoder(DualGate + CFM + FAM) → Score
-    """
+    """PoolNet + 解耦双分支门控 + CFM 乘法交互融合"""
 
     def __init__(self, pretrained=True, backbone_name="resnet18"):
         super().__init__()

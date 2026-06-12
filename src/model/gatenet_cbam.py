@@ -8,30 +8,7 @@ from .f3net_cbam import CBAM
 
 
 class GateNetCBAM(nn.Module):
-    """
-    GateNet-CBAM: 跨模型组合 —— 在 GateNet 的每个 DEM（过渡层）输出后
-    插入来自 F3NetCBAM 的 CBAM 注意力模块。
-
-    改进动机
-    --------
-    GateNet 的 DEM（Dimension Enhancement Module）对 backbone 各级特征
-    做通道压缩后，特征中仍混杂着大量背景噪声和无关通道响应。
-    这些噪声特征在随后的 GateModule 门控决策中会产生干扰：
-    门控值不够精确，导致 FPN 和 Parallel 分支都受到影响。
-
-    CBAM（ECCV 2018）串联通道注意力与空间注意力，在 DEM 之后、
-    门控 FPN 之前对特征进行双重精炼：
-      1. 通道注意力：抑制无关通道（如纹理、颜色背景通道）；
-      2. 空间注意力：聚焦于显著目标区域，压制背景位置响应。
-
-    DEM 压缩后的通道数较小（t4_ch=ch4//4 等），
-    CBAM 参数量极少（每个约几千参数），几乎不增加计算负担。
-
-    输出格式
-    --------
-    训练时返回 (output_fpn, pre_sal)，兼容 Trainer 多输出损失；
-    推理时返回单张量 pre_sal。
-    """
+    """GateNet-CBAM: 在每个 DEM 输出后插入 CBAM，精炼特征再送入门控 FPN"""
 
     def __init__(self, pretrained=True, backbone_name="resnet18"):
         super().__init__()
@@ -161,5 +138,5 @@ class GateNetCBAM(nn.Module):
         pre_sal = output_fpn + output_res
 
         if self.training:
-            return output_fpn, pre_sal
+            return {'main': pre_sal, 'aux_sal': [output_fpn]}
         return pre_sal

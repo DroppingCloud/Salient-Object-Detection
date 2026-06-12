@@ -4,9 +4,9 @@ import numpy as np
 import torch
 
 from model import (
-    F3Net, F3NetASPP, F3NetCBAM, F3NetDS, F3NetCFM, F3NetPPM,
-    PoolNet, PoolNetCFM, PoolNetGate, PoolNetGateCFM,
-    PoolNetCFI, PoolNetCFM_CBAM, PoolNetRA,
+    F3Net, F3NetASPP, F3NetCBAM,
+    PoolNet, PoolNetDS, PoolNetCFM, PoolNetGate, PoolNetGateCFM,
+    PoolNetASPP, PoolNetASPP_CFM, PoolNetASPPGate,
     CPDResNet,
     GateNet, GateNetCBAM, GateNetDS,
     BASNet,
@@ -18,18 +18,16 @@ from model import (
 # ──────────────────────────────────────────
 MODEL_REGISTRY = {
     "PoolNet": PoolNet,
+    "PoolNetDS": PoolNetDS,
     "PoolNetCFM": PoolNetCFM,
     "PoolNetGate": PoolNetGate,
+    "PoolNetASPP": PoolNetASPP,
+    "PoolNetASPP_CFM": PoolNetASPP_CFM,
     "PoolNetGateCFM": PoolNetGateCFM,
-    "PoolNetCFI": PoolNetCFI,
-    "PoolNetCFM_CBAM": PoolNetCFM_CBAM,
-    "PoolNetRA": PoolNetRA,
+    "PoolNetASPPGate": PoolNetASPPGate,
     "F3Net": F3Net,
     "F3NetCBAM": F3NetCBAM,
     "F3NetASPP": F3NetASPP,
-    "F3NetDS": F3NetDS,
-    "F3NetCFM": F3NetCFM,
-    "F3NetPPM": F3NetPPM,
     "CPDResNet": CPDResNet,
     "GateNet": GateNet,
     "GateNetCBAM": GateNetCBAM,
@@ -84,15 +82,15 @@ def _env_gpu_ids(default):
 PLATFORM = "AutoDL"   
 
 # 数据规模
-SCALING  = True
+SCALING  = False
 
 # 数据路径
 if PLATFORM == "Local":
-    DATA_ROOT = os.path.join(_PROJECT_ROOT, "data", "ECSSD")
+    DATA_ROOT = os.path.join(_PROJECT_ROOT, "data", "train")
     TEST_DIR  = os.path.join(_SRC_DIR, "../data/test")
 
 elif PLATFORM == "Colab":
-    DATA_ROOT = "/content/datasets/ECSSD"
+    DATA_ROOT = "/content/datasets/train"
     TEST_DIR  = "/content/datasets/test"
 
 elif PLATFORM == "AutoDL":
@@ -105,13 +103,15 @@ else:
 
 IMAGE_FOLDER  = "images"
 MASK_FOLDER   = "masks"
-OUTPUT_DIR    = os.path.join(_SRC_DIR, "../outputs")
+_OUTPUT_BASE = os.path.join(_SRC_DIR, "./outputs/scaling") if SCALING else os.path.join(_SRC_DIR, "./outputs/small")
+OUTPUT_DIR = os.path.join(_OUTPUT_BASE, BACKBONE)
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
 
 # ──────────────────────────────────────────
 # 数据预处理
 # ──────────────────────────────────────────
-RESIZE_SIZE  = 256
-CROP_SIZE    = 224
+RESIZE_SIZE  = 320
 FLIP_PROB    = 0.5
 MASK_THRESH  = 0.5
 
@@ -127,21 +127,17 @@ DIST_BACKEND       = "nccl"
 EVAL_USE_MULTI_GPU = _env_bool("EVAL_USE_MULTI_GPU", False)
 USE_AMP            = _env_bool("USE_AMP", False)
 
-GLOBAL_BATCH_SIZE  = 256 if SCALING and MULTI_GPU else 64 if SCALING else 16
-_WORLD_SIZE        = int(os.environ.get("WORLD_SIZE", "1"))
-_BATCH_SPLIT_SIZE  = len(GPU_IDS) if MULTI_GPU and GPU_IDS and _WORLD_SIZE > 1 else 1
-PER_GPU_BATCH_SIZE = max(1, GLOBAL_BATCH_SIZE // _BATCH_SPLIT_SIZE)
-BATCH_SIZE         = PER_GPU_BATCH_SIZE
+BATCH_SIZE   = 64 if SCALING else 8
 
 # ──────────────────────────────────────────
 # 数据加载
 # ──────────────────────────────────────────
 VAL_RATIO    = 0.1 if SCALING else 0.3
-NUM_WORKERS  = 8 if GLOBAL_BATCH_SIZE else 0
+NUM_WORKERS  = 8
 SEED         = 42
 
 # ──────────────────────────────────────────
-# 固定随机种子 (保证参数初始化可复现)
+# 固定随机种子
 # ──────────────────────────────────────────
 random.seed(SEED)
 np.random.seed(SEED)
@@ -166,7 +162,8 @@ DEVICE          = "cuda" if torch.cuda.is_available() else "cpu"
 # 损失函数
 # ──────────────────────────────────────────
 MAIN_LOSS_WEIGHT = 1.0
-AUX_LOSS_WEIGHT  = 0.4
+AUX_LOSS_WEIGHT  = [0.4]
+EDGE_LOSS_WEIGHT = 0.3
 
 # # ──────────────────────────────────────────
 # # 评估指标

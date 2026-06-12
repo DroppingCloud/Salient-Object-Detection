@@ -1,20 +1,3 @@
-"""
-PoolNetGate: PoolNet + 解耦双分支门控 (Channel Gate ∥ Spatial Gate → Fuse)
-
-改进动机:
-  PoolNet 的 DeepPoolLayer 直接 x + x_skip + x_info，skip 中的噪声无差别混入。
-
-  本模块对 skip 特征施加双分支并行门控:
-  - Channel Branch: 通道注意力加权 skip → 得到"通道精炼"视角
-  - Spatial Branch: 空间注意力加权 skip → 得到"空间精炼"视角
-  - Fuse: 两路 concat → conv 融合为统一的 gated_skip
-  - 最终: x + gated_skip + x_info → FAM
-
-  解耦的好处:
-  - 通道和空间各自独立学习，避免串联时梯度耦合导致一方主导另一方退化
-  - 融合卷积可以学习两种视角的互补组合方式
-"""
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -30,11 +13,7 @@ from .poolnet import (
 # ─────────────────────────────────────────────────────────────
 
 class ChannelGate(nn.Module):
-    """
-    通道注意力: 以 decoder 语义指导，对 skip 各通道加权。
-    decoder GAP → FC → ReLU → FC → Sigmoid → (B, C, 1, 1)
-    输出: skip * weight (通道精炼后的 skip)
-    """
+    """decoder GAP 生成通道权重，对 skip 各通道加权"""
 
     def __init__(self, ch, reduction=16):
         super().__init__()
@@ -59,11 +38,7 @@ class ChannelGate(nn.Module):
 # ─────────────────────────────────────────────────────────────
 
 class SpatialGate(nn.Module):
-    """
-    空间门控: 对 skip 各位置生成注意力权重。
-    concat(decoder, skip) → 3×3 conv → BN → ReLU → 1×1 → Sigmoid → (B, 1, H, W)
-    输出: skip * spatial_map (空间精炼后的 skip)
-    """
+    """concat(decoder, skip) → conv → sigmoid，对 skip 各位置加权"""
 
     def __init__(self, decoder_ch, skip_ch):
         super().__init__()
@@ -89,20 +64,15 @@ class SpatialGate(nn.Module):
 # ─────────────────────────────────────────────────────────────
 
 class DualGateFusion(nn.Module):
-    """
-    解耦双分支门控融合模块。
+    """Channel Gate ∥ Spatial Gate → concat → conv → gated_skip"""
 
-    skip_feat ──┬── ChannelGate(decoder, skip) → ch_out  ──┐
-                │                                           ├─ concat → conv → gated_skip
-                └── SpatialGate(decoder, skip) → sp_out  ──┘
-
-    两路并行产生不同视角的精炼结果，再通过 3×3 conv 融合。
-    """
-
-    def __init__(self, ch):
+    def __init__(self, ch, use_spatial=True, use_channel=True):
         super().__init__()
         self.channel_gate = ChannelGate(ch)
         self.spatial_gate = SpatialGate(decoder_ch=ch, skip_ch=ch)
+
+        self.use_spatial = use_spatial
+        self.use_channel = use_channel
 
         # 融合两路: 2*ch → ch
         self.fuse = nn.Sequential(
@@ -112,9 +82,21 @@ class DualGateFusion(nn.Module):
         )
 
     def forward(self, decoder_feat, skip_feat):
-        ch_out = self.channel_gate(decoder_feat, skip_feat)
-        sp_out = self.spatial_gate(decoder_feat, skip_feat)
-        return self.fuse(torch.cat([ch_out, sp_out], dim=1))
+        if self.use_spatial and self.use_channel:
+            ch_out = self.channel_gate(decoder_feat, skip_feat)
+            sp_out = self.spatial_gate(decoder_feat, skip_feat)
+            return self.fuse(torch.cat([ch_out, sp_out], dim=1))
+
+        elif self.use_spatial:
+            sp_out = self.spatial_gate(decoder_feat, skip_feat)
+            return sp_out
+
+        elif self.use_channel:
+            ch_out = self.channel_gate(decoder_feat, skip_feat)
+            return ch_out
+
+        else:
+            return skip_feat
 
 
 # ─────────────────────────────────────────────────────────────
@@ -122,13 +104,6 @@ class DualGateFusion(nn.Module):
 # ─────────────────────────────────────────────────────────────
 
 class DeepPoolLayerGated(nn.Module):
-    """
-    Decoder 单元:
-      1. 上采样 + 通道调整
-      2. DualGateFusion 对 skip 做双分支门控融合
-      3. decoder + gated_skip + info
-      4. FAM 多尺度增强
-    """
 
     def __init__(self, k, k_out, need_x2, need_fuse):
         super().__init__()
@@ -136,13 +111,12 @@ class DeepPoolLayerGated(nn.Module):
         self.need_fuse = need_fuse
         self.pool_scales = [2, 4, 8]
 
-        # 通道调整
         self.conv_in = nn.Sequential(
             nn.Conv2d(k, k_out, 3, padding=1, bias=False),
             nn.ReLU(inplace=True),
         )
 
-        # 双分支门控融合 (仅融合节点)
+        # 双分支门控
         if need_fuse:
             self.dual_gate = DualGateFusion(k_out)
 
@@ -192,11 +166,7 @@ class DeepPoolLayerGated(nn.Module):
 # ─────────────────────────────────────────────────────────────
 
 class PoolNetGate(nn.Module):
-    """
-    PoolNet + 解耦双分支门控 (Channel ∥ Spatial → Fuse)。
-
-    Encoder → PPM → ConvertLayer → Decoder(DualGate + FAM) → Score
-    """
+    """PoolNet + 解耦双分支门控 (Channel ∥ Spatial → Fuse)"""
 
     def __init__(self, pretrained=True, backbone_name="resnet18"):
         super().__init__()

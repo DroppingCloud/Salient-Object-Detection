@@ -7,27 +7,7 @@ from .gatenet import FoldConvASPP, GateModule
 
 
 class GateNetDS(nn.Module):
-    """
-    GateNetDS: GateNet + 多级深监督。
-
-    改进动机
-    --------
-    GateNet 原始训练时只有两路监督：
-      output_fpn（FPN 单路）和 pre_sal（FPN+Parallel 融合）。
-    中间解码层 D4、D3、D2 缺乏直接监督，导致：
-      1. 中间层梯度稀疏，深层特征语义性弱；
-      2. 全靠最终输出层向后传递梯度，收敛慢。
-
-    深监督（Deep Supervision）在 D4（H/8）、D3（H/16 ↑ H/8）
-    和 D2（H/4）三个中间解码阶段各加一个 1×1 预测头并施加监督，
-    使每一层特征都能直接感知目标位置，梯度更充分，边界更清晰。
-
-    输出格式（训练）
-    ----------------
-    (pre_sal, output_fpn, pred_d3, pred_d2)
-    — Trainer 权重: 2.0 | 1.0 | 1.0 | 1.0
-    推理时只返回 pre_sal。
-    """
+    """GateNetDS: GateNet + 中间解码层 D3/D2 深监督"""
 
     def __init__(self, pretrained=True, backbone_name="resnet18"):
         super().__init__()
@@ -94,8 +74,8 @@ class GateNetDS(nn.Module):
         )
 
         # ── 深监督辅助预测头 ──────────────────────────────────────────
-        self.head_d3 = nn.Conv2d(d3_ch, 1, 1)   # D3 (H/4)
-        self.head_d2 = nn.Conv2d(d2_ch, 1, 1)   # D2 (H/4 after upsample)
+        self.head_d3 = nn.Conv2d(d3_ch, 1, 1)
+        self.head_d2 = nn.Conv2d(d2_ch, 1, 1)
 
         self._init_weights()
 
@@ -154,9 +134,11 @@ class GateNetDS(nn.Module):
         pre_sal = output_fpn + output_res
 
         if self.training:
-            # 深监督：D3 和 D2 阶段各加一个辅助预测
             pred_d3 = F.interpolate(self.head_d3(D3), (H, W), mode='bilinear', align_corners=True)
             pred_d2 = F.interpolate(self.head_d2(D2), (H, W), mode='bilinear', align_corners=True)
-            return pre_sal, output_fpn, pred_d3, pred_d2
+            return {
+                'main': pre_sal,
+                'aux_sal': [output_fpn, pred_d3, pred_d2],
+            }
 
         return pre_sal
