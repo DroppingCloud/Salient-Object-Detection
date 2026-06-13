@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .cpd_new import Aggregation, B2ResNet50, BasicConv2d, HolisticAttention, RFB
+from .cpd import Aggregation, B2ResNet50, BasicConv2d, HolisticAttention, RFB
 
 
 class ConvBNReLU(nn.Module):

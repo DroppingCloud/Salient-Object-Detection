@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .cpd_new import Aggregation, B2ResNet50, HolisticAttention, RFB
+from .cpd import Aggregation, B2ResNet50, HolisticAttention, RFB
 
 
 class ChannelAttention(nn.Module):
