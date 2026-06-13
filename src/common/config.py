@@ -7,7 +7,7 @@ from model import (
     F3Net, F3NetASPP, F3NetCBAM, F3NetDS, F3NetCFM, F3NetPPM,
     PoolNet, PoolNetCFM, PoolNetGate, PoolNetGateCFM,
     PoolNetCFI, PoolNetCFM_CBAM, PoolNetRA,
-    CPDResNet, CPDASPP, CPDCBAM,
+    CPDResNet, CPDASPP, CPDCBAM, CPDCFM, CPDGate, CPDDS, CPDResHA, CPDGatedHA, CPDDetailHint,
     GateNet, GateNetCBAM, GateNetDS,
     BASNet,
     ResNet18, ResNet18Pre, ResNet34Pre, ResNet50Pre,
@@ -33,6 +33,12 @@ MODEL_REGISTRY = {
     "CPDResNet": CPDResNet,
     "CPDASPP": CPDASPP,
     "CPDCBAM": CPDCBAM,
+    "CPDCFM": CPDCFM,
+    "CPDGate": CPDGate,
+    "CPDDS": CPDDS,
+    "CPDResHA": CPDResHA,
+    "CPDGatedHA": CPDGatedHA,
+    "CPDDetailHint": CPDDetailHint,
     "GateNet": GateNet,
     "GateNetCBAM": GateNetCBAM,
     "GateNetDS": GateNetDS,
@@ -86,7 +92,7 @@ def _env_gpu_ids(default):
 PLATFORM = "AutoDL"   
 
 # 数据规模
-SCALING  = True
+SCALING  = False
 
 # 数据路径
 if PLATFORM == "Local":
