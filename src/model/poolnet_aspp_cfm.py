@@ -37,7 +37,7 @@ class DeepPoolLayerASPP_CFM(nn.Module):
         return x
 
 
-class PoolNetASPP_CFM(nn.Module):
+class PoolNetASPPCFM(nn.Module):
     """PoolNet + ASPP（最深 2 层）+ CFM skip 融合（最深 2 层）+ FAM（浅层 2 层）"""
 
     def __init__(self, pretrained=True, backbone_name="resnet18"):

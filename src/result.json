@@ -29,7 +29,7 @@
         "best_smeasure": 0.9026863760744815,
         "best_wfm": 0.884707747767997
     },
-    "PoolNetASPP_CFM": {
+    "PoolNetASPPCFM": {
         "best_mae": 0.04113337405836678,
         "best_maxf": 0.9190718210222603,
         "best_smeasure": 0.9067388154529586,

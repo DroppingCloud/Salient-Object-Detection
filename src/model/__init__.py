@@ -1,12 +1,13 @@
 from .resnet import ResNet18, ResNet18Pre, ResNet34Pre, ResNet50Pre
 from .poolnet import PoolNet
 from .poolnet_aspp import PoolNetASPP
-from .poolnet_aspp_cfm import PoolNetASPP_CFM
+from .poolnet_aspp_cfm import PoolNetASPPCFM
 from .poolnet_ds import PoolNetDS
 from .poolnet_cfm import PoolNetCFM
 from .poolnet_gate import PoolNetGate
 from .poolnet_gate_cfm import PoolNetGateCFM
 from .poolnet_aspp_gate import PoolNetASPPGate
+from .poolnet_cfm_enhanced import PoolNetCFMEnhanced
 
 from .f3net import F3Net
 from .f3net_cbam import F3NetCBAM
@@ -37,10 +38,11 @@ __all__ = [
     "PoolNetDS",
     "PoolNetCFM",
     "PoolNetASPP",
-    "PoolNetASPP_CFM",
+    "PoolNetASPPCFM",
     "PoolNetGate",
     "PoolNetGateCFM",
     "PoolNetASPPGate",
+    "PoolNetCFMEnhanced",
 
     "F3Net",
     "F3NetCBAM",

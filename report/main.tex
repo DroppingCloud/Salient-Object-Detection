@@ -516,24 +516,331 @@ S_{\text{final}}
 
 
 % ----------------------------------------------------------------
-\section{FluxNet}
+\section{探索与创新}
 
 % ----------------------------------------------------------------
-\subsection{方法概述}
+\subsection{PoolNet-DS}
 
+PoolNet-DS 在 PoolNet 主干结构基础上引入多尺度深监督（Deep Supervision）与边缘感知约束。
+原始 PoolNet 仅在最终解码特征上生成显著图，训练信号需要经过完整解码路径反向传播到中间层，
+容易使中高层融合节点缺少直接监督。为缓解这一问题，我们在三个中间解码阶段分别设置辅助显著性预测头，
+并在浅层高分辨率特征上增加边缘预测分支，使网络同时关注区域完整性与边界结构。
 
-%----------------------------------------------------------------
-\subsection{Dual-Branch Gate}
+设自顶向下解码过程中得到的三个中间特征为 \(M_3,M_2,M_1\)，其中 \(M_1\) 分辨率最高、包含更多局部细节。
+PoolNet-DS 对每个中间特征使用独立的多尺度预测头生成辅助显著图：
+\[
+S_i^{aux}
+=
+\operatorname{Up}
+\left(
+H_i(M_i)
+\right)
+\]
+其中 \(H_i(\cdot)\) 表示由两层 \(3\times3\) 卷积和 \(1\times1\) 预测卷积组成的辅助头，
+\(\operatorname{Up}(\cdot)\) 表示上采样至输入图像尺寸。
+对于浅层特征 \(M_1\)，额外使用边缘分支预测边界图：
+\[
+E_1
+=
+\operatorname{Up}
+\left(
+\operatorname{Conv}_{1\times1}
+\left(
+\operatorname{ReLU}
+\left(
+\operatorname{BN}
+\left(
+\operatorname{Conv}_{3\times3}(M_1)
+\right)
+\right)
+\right)
+\right)
+\]
+训练时，主显著图仍采用 BCE、SSIM 与 Soft IoU 的组合损失；
+辅助显著图采用 BCE 与 Soft IoU 约束，边缘分支则以由真实掩码 Sobel 梯度生成的边缘图作为监督信号。
+因此，整体损失可写为：
+\[
+\mathcal{L}
+=
+\mathcal{L}_{main}
++
+\sum_i \lambda_i \mathcal{L}_{aux}(S_i^{aux},G)
++
+\lambda_e \mathcal{L}_{edge}(E_1,\nabla G)
+\]
+其中 \(G\) 表示真实显著性标注，\(\nabla G\) 表示归一化后的 Sobel 边缘图。
 
+% ----------------------------------------------------------------
+\subsection{PoolNet-Gate}
 
-%----------------------------------------------------------------
-\subsection{Scale Amplifier}
+PoolNet-Gate 针对 PoolNet 中 skip connection 直接相加可能引入背景噪声的问题，
+在每个需要融合浅层特征的 Deep Pooling Layer 中加入双分支门控模块。
+该模块并不改变 PoolNet 的整体编码器--解码器框架，而是在高层解码特征与浅层 skip 特征融合之前，
+自适应筛选浅层特征中的有效通道和有效空间位置。
 
+具体而言，给定当前解码特征 \(D\) 与同分辨率浅层特征 \(L\)，通道门控分支首先对 \(D\) 做全局平均池化，
+再通过两层 \(1\times1\) 卷积生成通道权重：
+\[
+A_c
+=
+\sigma
+\left(
+W_2
+\delta
+\left(
+W_1
+\operatorname{GAP}(D)
+\right)
+\right),
+\quad
+L_c = A_c \odot L
+\]
+其中 \(\sigma(\cdot)\) 为 Sigmoid 函数，\(\delta(\cdot)\) 为 ReLU 激活，\(\odot\) 表示逐元素乘法。
+空间门控分支则拼接 \(D\) 与 \(L\)，通过卷积预测空间注意力图：
+\[
+A_s
+=
+\sigma
+\left(
+\operatorname{Conv}_{1\times1}
+\left(
+\delta
+\left(
+\operatorname{BN}
+\left(
+\operatorname{Conv}_{3\times3}([D,L])
+\right)
+\right)
+\right)
+\right),
+\quad
+L_s = A_s \odot L
+\]
+两路门控结果进一步拼接并用卷积融合：
+\[
+\hat{L}
+=
+\operatorname{Conv}_{3\times3}([L_c,L_s])
+\]
+最终，PoolNet-Gate 的融合形式由原始的
+\(D+L+I\) 改为 \(D+\hat{L}+I\)，其中 \(I\) 为 PPM 产生的全局引导特征。
+这种设计使通道门控负责选择语义相关的特征维度，空间门控负责抑制非显著区域响应，
+二者互补地提升了浅层细节特征的可靠性。
 
+% ----------------------------------------------------------------
+\subsection{PoolNet-ASPP}
 
-%----------------------------------------------------------------
-\subsection{Cross Feature Fusion}
+PoolNet-ASPP 的动机是增强深层解码阶段的多尺度上下文建模能力。
+原始 PoolNet 虽然通过 PPM 提供全局语义引导，并在 Deep Pooling Layer 内使用多尺度平均池化聚合上下文，
+但在最深层解码时仍主要依赖局部卷积完成特征变换。
+显著目标检测中，目标尺度变化较大，复杂背景中的局部高响应区域也容易被误判为显著目标；
+因此，我们在最深的两个解码单元中用 ASPP 模块替换原有 FAM 结构，以增加不同感受野下的语义判别能力。
 
+设深层输入特征为 \(X\)，ASPP 模块包含 \(1\times1\) 卷积分支、多个空洞卷积分支以及全局平均池化分支：
+\[
+Y
+=
+\operatorname{Proj}
+\left(
+\left[
+\operatorname{Conv}_{1\times1}(X),
+\operatorname{Conv}_{3\times3}^{r=2}(X),
+\operatorname{Conv}_{3\times3}^{r=4}(X),
+\operatorname{Conv}_{3\times3}^{r=8}(X),
+\operatorname{Up}(\operatorname{GAP}(X))
+\right]
+\right)
+\]
+其中 \(r\) 表示空洞卷积的 dilation rate，\(\operatorname{Proj}(\cdot)\) 为 \(1\times1\) 投影卷积。
+在解码流程中，前两个从深到浅的融合节点采用
+\[
+D_i
+=
+\operatorname{ASPP}
+\left(
+\operatorname{Up}(D_{i+1})
+\right)
++
+L_i
++
+I_i
+\]
+而浅层两个节点仍保留 PoolNet 原有的 FAM 结构。
+这样的分层设计使深层特征更关注尺度鲁棒的语义定位，浅层特征则继续负责边界和局部结构恢复，
+避免在所有层统一使用 ASPP 带来的计算冗余。
+
+% ----------------------------------------------------------------
+\subsection{PoolNet-CFM}
+
+PoolNet-CFM 将原始 PoolNet 中的直接加法融合替换为跨层特征交互模块（Cross Feature Module，CFM）。
+直接相加默认高层解码特征与浅层 skip 特征已经在语义上对齐，
+但二者分别偏向语义定位与空间细节，简单相加可能导致响应混杂。
+因此，PoolNet-CFM 借鉴 \(\text{F}^3\) Net 中的交互思想，
+先分别对两路特征进行卷积变换，再通过乘法建模二者的一致响应。
+
+给定解码特征 \(D\) 和浅层特征 \(L\)，CFM 首先得到两路二阶特征：
+\[
+D_2 = f_d^{(2)}(f_d^{(1)}(D)),
+\quad
+L_2 = f_l^{(2)}(f_l^{(1)}(L))
+\]
+随后使用逐元素乘法获得交互特征：
+\[
+F_{\times} = D_2 \odot L_2
+\]
+该乘法项相当于软一致性约束，也就是只有在高层语义与浅层细节共同响应的位置，
+融合特征才会被显著增强。之后，交互结果分别回注到两条分支并进行残差精炼：
+\[
+\hat{D}
+=
+f_d^{(4)}
+\left(
+f_d^{(3)}(F_{\times}) + f_d^{(1)}(D)
+\right),
+\quad
+\hat{L}
+=
+f_l^{(4)}
+\left(
+f_l^{(3)}(F_{\times}) + f_l^{(1)}(L)
+\right)
+\]
+最终输出为
+\[
+F_{cfm} = \hat{D} + \hat{L}
+\]
+在 PoolNet-CFM 的每个融合节点中，解码特征先经过 \(3\times3\) 卷积调整通道，
+再与 skip 特征送入 CFM，最后叠加全局引导特征 \(I\) 并进入 FAM：
+\[
+D_i
+=
+\operatorname{FAM}
+\left(
+\operatorname{CFM}(D_{i+1}^{\uparrow},L_i)+I_i
+\right)
+\]
+该结构使融合过程从无条件相加升级为语义与细节一致性驱动的交互融合。
+
+% ----------------------------------------------------------------
+\subsection{PoolNet-Gate-CFM}
+
+PoolNet-Gate-CFM 进一步将门控筛选与 CFM 交互融合结合起来。
+PoolNet-Gate 可以在融合前抑制浅层背景噪声，PoolNet-CFM 则能够增强高层语义与浅层细节的一致响应，
+可以形成互补。
+
+在该模型中，每个需要 skip 融合的解码单元首先利用双分支门控得到净化后的浅层特征：
+\[
+\hat{L}_i
+=
+\operatorname{DualGate}(D_i,L_i)
+\]
+随后将当前解码特征与 \(\hat{L}_i\) 输入 CFM：
+\[
+D_i'
+=
+\operatorname{CFM}(D_i,\hat{L}_i)+I_i
+\]
+最后再通过 FAM 进行多尺度池化增强：
+\[
+D_i
+=
+\operatorname{FAM}(D_i')
+\]
+其中，门控模块减少 skip 特征中与显著目标无关的通道和空间响应，
+CFM 则在较干净的浅层特征基础上建模跨层乘法关系。
+
+% ----------------------------------------------------------------
+\subsection{PoolNet-ASPP-Gate}
+
+PoolNet-ASPP-Gate 采用分层混合解码策略：在深层两个解码单元使用 ASPP，
+在浅层两个解码单元使用双分支 Gate。
+这一设计基于显著目标检测中不同层级特征的功能差异，
+深层特征分辨率较低但语义信息强，更适合通过 ASPP 扩大感受野、建模尺度变化；
+而浅层特征分辨率较高但背景噪声较多，更适合通过门控机制筛选边界与局部纹理信息。
+
+令 \(i=0,1\) 表示较深的两个解码阶段，\(i=2,3\) 表示较浅的两个解码阶段，
+PoolNet-ASPP-Gate 的解码单元可概括为：
+\[
+D_i =
+\begin{cases}
+\operatorname{ASPP}(D_{i+1}^{\uparrow}) + L_i + I_i, & i \in \{0,1\}\\
+\operatorname{FAM}(D_{i+1}^{\uparrow} + \operatorname{DualGate}(D_{i+1}^{\uparrow},L_i) + I_i), & i = 2\\
+\operatorname{FAM}(D_{i+1}), & i = 3
+\end{cases}
+\]
+相比于所有层统一引入同一种模块，这种方式更符合 PoolNet 自顶向下解码的语义分工。
+其中深层负责确定显著目标的大致位置与尺度，浅层负责恢复边缘和细节。
+
+% ----------------------------------------------------------------
+\subsection{PoolNet-ASPP-CFM}
+
+PoolNet-ASPP-CFM 关注深层语义增强与跨层交互融合的联合建模，
+在最深两个解码阶段同时使用 ASPP 与 CFM。
+ASPP 先增强当前解码特征的多尺度语义表达，CFM 再将其与对应 skip 特征进行乘法交互。
+
+对于深层融合节点，其计算过程为：
+\[
+\tilde{D}_i
+=
+\operatorname{ASPP}(D_{i+1}^{\uparrow})
+\]
+\[
+D_i
+=
+\operatorname{CFM}(\tilde{D}_i,L_i)+I_i
+\]
+浅层节点则保留原始 PoolNet 的 FAM 结构：
+\[
+D_i
+=
+\operatorname{FAM}(D_{i+1}^{\uparrow}+L_i+I_i)
+\]
+这种设计的核心假设是，深层语义特征经过 ASPP 之后具有更强的尺度鲁棒性，
+再与 skip 特征进行乘法交互时，可以更准确地选择与显著目标相关的空间细节。
+
+% ----------------------------------------------------------------
+\subsection{PoolNet-CFM(Enhanced)}
+
+PoolNet-CFM(Enhanced) 是在 PoolNet-CFM 基础上得到的增强版本。
+该模型保留 CFM 作为主要跨层融合方式，同时对解码尾部加入前景门控（Foreground Gate），
+用于根据深层融合结果对最终高分辨率特征进行再加权。
+
+具体而言，模型首先执行与 PoolNet-CFM 相同的自顶向下解码，并在第一个融合节点得到深层引导特征 \(G_f\)：
+\[
+G_f = D_0
+\]
+随后经过后续解码单元得到最终特征 \(D_{final}\)。
+前景门控以 \(G_f\) 为 guide 预测单通道前景权重图：
+\[
+A_f
+=
+\sigma
+\left(
+\operatorname{Conv}_{1\times1}
+\left(
+\delta
+\left(
+\operatorname{BN}
+\left(
+\operatorname{Conv}_{3\times3}(G_f)
+\right)
+\right)
+\right)
+\right)
+\]
+最终特征按如下方式进行门控：
+\[
+\hat{D}_{final}
+=
+D_{final}
+\odot
+\left(
+(1-\alpha)+\alpha A_f
+\right)
+\]
+
+从模型设计上看，Enhanced 版本将 CFM 的跨层一致性建模与深层前景先验结合起来，
+既利用浅层细节恢复边界，又利用深层语义约束最终响应区域。
 
 %----------------------------------------------------------------
 \section{实验}
