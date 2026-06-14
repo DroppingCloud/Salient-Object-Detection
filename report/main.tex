@@ -57,15 +57,15 @@
 
 \newcommand{\tabincell}[2]{\begin{tabular}{@{}#1@{}}#2\end{tabular}}  %表格强制换行
 %-------------------------字体设置--------------
-% 中文字体
-\setCJKmainfont[AutoFakeBold=true]{Kaiti SC}
-\setCJKsansfont{Yuanti SC}
-\setCJKmonofont{Kaiti SC}
-\newCJKfontfamily\headinghei{Hei}
+% 中文字体（Windows 兼容）
+% \setCJKmainfont[AutoFakeBold=true]{Kaiti SC}
+% \setCJKsansfont{Yuanti SC}
+% \setCJKmonofont{Kaiti SC}
+\newCJKfontfamily\headinghei{SimHei}
 % 英文字体
-\setmainfont{Palatino}
-\setsansfont{Annai MN}
-\setmonofont{Menlo}
+\setmainfont{Palatino Linotype}
+% \setsansfont{Annai MN}
+\setmonofont{Courier New}
 
 \newcommand{\yihao}{\fontsize{26pt}{36pt}\selectfont}           % 一号, 1.4 倍行距
 \newcommand{\erhao}{\fontsize{22pt}{28pt}\selectfont}          % 二号, 1.25倍行距
@@ -212,9 +212,9 @@ rulesepcolor= \color{ red!20!green!20!blue!20}
 \begin{titlepage}
     \begin{center}
     \includegraphics[width=0.8\textwidth]{fig/NKU.png}\\[1cm]
-    \textsc{\Huge \kaishu{\textbf{南\ \ \ \ \ \ 开\ \ \ \ \ \ 大\ \ \ \ \ \ 学}} }\\[0.9cm]
-    \textsc{\huge \kaishu{\textbf{计\ \ 算\ \ 机\ \ 学\ \ 院}}}\\[0.5cm]
-    \textsc{\Large \textbf{《深度学习与应用》期末大作业}}\\[0.8cm]
+    {\Huge \kaishu{\textbf{南\ \ \ \ \ \ 开\ \ \ \ \ \ 大\ \ \ \ \ \ 学}} }\\[0.9cm]
+    {\huge \kaishu{\textbf{计\ \ 算\ \ 机\ \ 学\ \ 院}}}\\[0.5cm]
+    {\Large \textbf{《深度学习与应用》期末大作业}}\\[0.8cm]
     \HRule \\[0.9cm]
     { \LARGE \bfseries 基于深度学习的显著性目标检测方法研究}\\[0.4cm]
     \HRule \\[2.0cm]
@@ -520,6 +520,13 @@ $\text{F}^3$Net 的核心创新点包括：
     \item \textbf{特征融合反馈（FFM）}：以粗粒度路径的解码中间结果为反馈信号，逐级精炼精细路径，使网络在多次迭代中渐进式完善显著图。
     \item \textbf{双路径互补解码}：粗路径（Path 1）自顶向下提取多尺度全局结构，精细路径（Path 2）在粗路径的引导下补充细节。
 \end{itemize}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=1.0\textwidth]{fig/f3net.png}
+  \caption{$\text{F}^3$Net 模型架构}
+  \label{fig:f3net}
+\end{figure}
 
 \begin{figure}[t]
   \centering
