@@ -160,6 +160,13 @@ class Trainer:
         """
 
         # ── 单 Tensor ────────────────────────────────────────────────
+        if isinstance(outputs, (tuple, list)):
+            loss = MAIN_LOSS_WEIGHT * self._compute_bce_ssim_iou_loss(outputs[0], masks)
+            for i, out in enumerate(outputs[1:]):
+                w = AUX_LOSS_WEIGHT[i] if i < len(AUX_LOSS_WEIGHT) else AUX_LOSS_WEIGHT[-1]
+                loss = loss + w * self._compute_bce_iou_loss(out, masks)
+            return loss
+
         if not isinstance(outputs, dict):
             return self._compute_bce_ssim_iou_loss(outputs, masks)
 
@@ -240,7 +247,12 @@ class Trainer:
                     outputs = self.model(images)
                     loss = self._compute_loss(outputs, masks)
 
-                preds = outputs['main'] if isinstance(outputs, dict) else outputs
+                if isinstance(outputs, dict):
+                    preds = outputs['main']
+                elif isinstance(outputs, (tuple, list)):
+                    preds = outputs[0]
+                else:
+                    preds = outputs
 
                 # 如果输出尺寸和 mask 不一致，先对齐
                 if preds.shape[-2:] != masks.shape[-2:]:
