@@ -88,14 +88,14 @@ def _env_gpu_ids(default):
     return [int(item.strip()) for item in value.split(",") if item.strip()]
 
 # 训练平台
-PLATFORM = "AutoDL"   
+PLATFORM = "Local"   
 
 # 数据规模
 SCALING  = False
 
 # 数据路径
 if PLATFORM == "Local":
-    DATA_ROOT = os.path.join(_PROJECT_ROOT, "data", "train")
+    DATA_ROOT = os.path.join(_PROJECT_ROOT, "data", "HKU-IS")
     TEST_DIR  = os.path.join(_SRC_DIR, "../data/test")
 
 elif PLATFORM == "Colab":

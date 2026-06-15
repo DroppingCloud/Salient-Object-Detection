@@ -478,4 +478,4 @@ if __name__ == "__main__":
     )
 
     # 划分测试集
-    save_val_subset(val_dataset, save_root=TEST_DIR, max_samples=None)
+    # save_val_subset(val_dataset, save_root=TEST_DIR, max_samples=None)
