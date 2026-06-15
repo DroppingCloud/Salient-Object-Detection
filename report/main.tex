@@ -205,8 +205,8 @@ rulesepcolor= \color{ red!20!green!20!blue!20}
 \begin{titlepage}
     \begin{center}
     \includegraphics[width=0.8\textwidth]{fig/NKU.png}\\[1cm]
-    {\Huge \kaishu\textbf{南开大学}}\\[0.9cm]
-    {\huge \kaishu\textbf{计算机学院}}\\[0.5cm]
+    {\Huge \kaishu{\textbf{南\ \ \ \ \ \ 开\ \ \ \ \ \ 大\ \ \ \ \ \ 学}} }\\[0.9cm]
+    {\huge \kaishu{\textbf{计\ \ 算\ \ 机\ \ 学\ \ 院}}}\\[0.5cm]
     {\Large \textbf{《深度学习与应用》期末大作业}}\\[0.8cm]
     \HRule \\[0.9cm]
     { \LARGE \bfseries 基于深度学习的显著性目标检测方法研究}\\[0.4cm]
@@ -598,7 +598,96 @@ S_{\text{final}}
 % ----------------------------------------------------------------
 \subsection{$\text{F}^3$ Net}
 
+% ----------------------------------------------------------------
+\subsubsection{基本思想}
 
+$\text{F}^3$Net \cite{wei2020f3net}是一种面向显著目标检测的双路径解码网络（图~\ref{fig:f3net}），
+其名称来源于三个核心设计理念：特征融合（Fusion）、跨路径反馈（Feedback）与多尺度聚焦（Focus）。
+$\text{F}^3$Net 的核心创新点包括：
+
+\begin{itemize}
+    \item \textbf{跨层特征交互（CFI）}：通过相互门控机制在高层语义特征与低层空间特征之间建立双向注意力，代替简单拼接或相加。
+    \item \textbf{特征融合反馈（FFM）}：以粗粒度路径的解码中间结果为反馈信号，逐级精炼精细路径，使网络在多次迭代中渐进式完善显著图。
+    \item \textbf{双路径互补解码}：粗路径（Path 1）自顶向下提取多尺度全局结构，精细路径（Path 2）在粗路径的引导下补充细节。
+\end{itemize}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=1.0\textwidth]{fig/f3net.png}
+  \caption{$\text{F}^3$Net 模型架构}
+  \label{fig:f3net}
+\end{figure}
+
+% ----------------------------------------------------------------
+\subsubsection{跨层特征交互模块（CFI）}
+
+跨层特征交互模块（Cross Feature Interaction，CFI）是 $\text{F}^3$Net 的核心融合单元。
+与传统 skip connection 直接相加不同，CFI 让两路特征相互生成对方的注意力权重，从而更精确地提取互补信息。
+
+给定高层特征 $F_{\text{hi}} \in \mathbb{R}^{B \times C_h \times H' \times W'}$ 和低层特征 $F_{\text{lo}} \in \mathbb{R}^{B \times C_l \times H \times W}$，
+CFI 首先将二者投影到公共通道数 $d$ 并上采样高层特征至低层分辨率：
+\[
+H = \phi_h(F_{\text{hi}}^{\uparrow}), \quad L = \phi_l(F_{\text{lo}})
+\]
+随后拼接计算双向门控权重：
+\[
+A_H = \sigma\!\left(W_h[H, L]\right), \quad A_L = \sigma\!\left(W_l[H, L]\right)
+\]
+其中 $[\,\cdot\,]$ 表示通道拼接，$\sigma(\cdot)$ 为 Sigmoid，$W_h, W_l$ 均为 $1\times1$ 卷积。
+各路特征在接收对方门控增强后进行拼接融合：
+\[
+H' = H \odot A_H + L, \quad L' = L \odot A_L + H
+\]
+\[
+F_{\text{CFI}} = \text{Conv}_{3\times3}([H', L'])
+\]
+这种双向交互使高层特征在语义层面选择与低层结构对应的区域，低层特征则在空间层面关注被高层语义激活的显著位置，二者协同提升融合质量。
+
+% ----------------------------------------------------------------
+\subsubsection{特征融合反馈模块（FFM）}
+
+特征融合反馈模块（Feature Fusion Feedback Module，FFM）负责将粗路径（Path 1）在同一尺度的中间特征作为先验信号注入精细路径（Path 2），
+实现跨路径的渐进式精炼。
+
+给定精细路径当前特征 $X$ 和粗路径反馈特征 $F_{\text{fb}}$，FFM 首先将后者上采样至 $X$ 的分辨率，再拼接融合：
+\[
+F_{\text{fuse}} = \text{Conv}_{3\times3}([X, F_{\text{fb}}^{\uparrow}])
+\]
+随后通过通道注意力（SE-style）对融合特征进行自适应重标定：
+\[
+A_c = \sigma\!\left(\text{FC}_2\!\left(\delta\!\left(\text{FC}_1\!\left(\text{GAP}(F_{\text{fuse}})\right)\right)\right)\right)
+\]
+最终以残差形式输出：
+\[
+F_{\text{FFM}} = F_{\text{fuse}} \odot A_c + F_{\text{fuse}}
+\]
+残差连接保证即使注意力权重接近零时网络也不会丢失原有融合信息，使训练更加稳定。
+
+% ----------------------------------------------------------------
+\subsubsection{双路径解码流程}
+
+$\text{F}^3$Net 采用共享骨干网络的双路径解码器。骨干网络依次输出 $C_1, C_2, C_3, C_4$ 四个尺度的特征（分辨率逐渐降低，通道数逐渐增加）。
+
+\textbf{Path 1（粗路径）}从最深层开始，通过三次 CFI 自顶向下完成粗粒度解码：
+\[
+P_3^{(1)} = \text{CFI}(C_4, C_3), \quad
+P_2^{(1)} = \text{CFI}(P_3^{(1)}, C_2), \quad
+P_1^{(1)} = \text{CFI}(P_2^{(1)}, C_1)
+\]
+
+\textbf{Path 2（精细路径）}在 CFI 的基础上引入 FFM 接收 Path 1 的反馈：
+\[
+P_3^{(2)} = \text{FFM}\!\left(\text{CFI}(C_4, C_3),\ P_3^{(1)}\right)
+\]
+\[
+P_2^{(2)} = \text{FFM}\!\left(\text{CFI}(P_3^{(2)}, C_2),\ P_2^{(1)}\right)
+\]
+\[
+P_1^{(2)} = \text{FFM}\!\left(\text{CFI}(P_2^{(2)}, C_1),\ P_1^{(1)}\right)
+\]
+
+最终主预测图由 Path 2 的最高分辨率特征 $P_1^{(2)}$ 经 $1\times1$ 卷积生成，
+辅助预测图由 Path 1 的 $P_1^{(1)}$ 生成，训练时共同优化。
 
 % ----------------------------------------------------------------
 \subsection{CPD}
@@ -1129,7 +1218,110 @@ H = \phi(X_1)
 \[
 \widetilde{F}_3^d = F_3^d + \gamma \cdot G(F_3^d, H, S_i)\odot \operatorname{Proj}(H)
 \]
-其中 \(G(\cdot)\) 为门控函数，\(\gamma\) 为可学习系数。该模块不改变 CPD 主体“深层优先”的结构原则，而是以较小代价向第二阶段注入边缘与局部纹理提示。
+其中 \(G(\cdot)\) 为门控函数，\(\gamma\) 为可学习系数。该模块不改变 CPD 主体”深层优先”的结构原则，而是以较小代价向第二阶段注入边缘与局部纹理提示。
+
+% ----------------------------------------------------------------
+\subsection{$\text{F}^3$Net-CBAM}
+
+$\text{F}^3$Net-CBAM 在 $\text{F}^3$Net 双路径解码器的每个 CFI 和 FFM 输出后插入卷积块注意力模块（Convolutional Block Attention Module，CBAM），
+对中间特征进行通道与空间两级精炼，再送入下一解码阶段。
+
+CBAM 由串联的通道注意力和空间注意力组成。
+对于输入特征 $F \in \mathbb{R}^{B \times C \times H \times W}$，通道注意力分支分别经过全局平均池化与最大池化后共享 MLP 并相加：
+\[
+A_c = \sigma\!\left(\text{MLP}(\text{AvgPool}(F)) + \text{MLP}(\text{MaxPool}(F))\right)
+\]
+\[
+F' = F \odot A_c
+\]
+空间注意力分支沿通道维度分别取均值和最大值后拼接，经 $7\times7$ 卷积生成二维注意力图：
+\[
+A_s = \sigma\!\left(\text{Conv}_{7\times7}\!\left([\bar{F}', \hat{F}']\right)\right)
+\]
+\[
+\tilde{F} = F' \odot A_s
+\]
+其中 $\bar{F}' = \text{mean}(F', \text{dim}=1)$，$\hat{F}' = \text{max}(F', \text{dim}=1)$。
+
+在 $\text{F}^3$Net-CBAM 中，每个解码阶段的 CBAM 按如下方式嵌入：
+\[
+P_i^{(1)} = \text{CBAM}_i^{(1)}\!\left(\text{CFI}(P_{i+1}^{(1)}, C_i)\right)
+\]
+\[
+P_i^{(2)} = \text{CBAM}_i^{(2)}\!\left(\text{FFM}\!\left(\text{CFI}(P_{i+1}^{(2)}, C_i),\ P_i^{(1)}\right)\right)
+\]
+CBAM 使每阶段特征在送入下一层 CFI 之前先完成通道维度的语义聚焦和空间维度的前景定位，
+抑制非显著区域的无效响应，从而提高跨层交互的信噪比。
+
+% ----------------------------------------------------------------
+\subsection{$\text{F}^3$Net-ASPP}
+
+$\text{F}^3$Net-ASPP 的动机是增强 CFI 模块在聚合高层特征时的多尺度感知能力。
+原始 $\text{F}^3$Net 中，CFI 通过 $1\times1$ 卷积将高层特征投影到公共通道，
+这种单尺度投影在目标尺度变化较大时难以同时建模全局语义和局部结构。
+
+为此，$\text{F}^3$Net-ASPP 将 CFI 中的高层特征投影替换为轻量级 ASPP（CFI\_ASPP），
+在进行跨层交互之前先用多分支空洞卷积扩大高层特征的感受野：
+\[
+H = \text{ASPP}(F_{\text{hi}}^{\uparrow}), \quad L = \phi_l(F_{\text{lo}})
+\]
+ASPP 模块包含五条并行分支——$1\times1$ 卷积、空洞率 $r\in\{2,4,6\}$ 的 $3\times3$ 空洞卷积及全局平均池化分支——输出拼接后经 $1\times1$ 投影压缩：
+\[
+\text{ASPP}(X) = \text{Proj}\!\left(\left[b_0(X), b_1(X), b_2(X), b_3(X), \text{Up}(b_4(X))\right]\right)
+\]
+CFI\_ASPP 的后续交互流程与原始 CFI 保持一致，通过双向门控融合高层与低层特征。
+
+这种设计使高层特征在与低层进行跨层交互前已具备多尺度语义感知，
+从而在注意力权重计算时对大尺度目标和小尺度细节均能有效响应。
+
+% ----------------------------------------------------------------
+\subsection{GateNet-CBAM}
+
+GateNet-CBAM 在 GateNet 的深度编码模块（DEM）输出与门控单元之间插入 CBAM 对过渡特征进行精炼。
+
+GateNet 原始流程中，DEM 将骨干网络各层特征 $E_i$ 压缩为过渡特征 $T_i$，
+再送入门控单元参与 FPN 解码。然而，$T_i$ 直接来自卷积压缩，可能保留了背景噪声，
+影响后续门控权重的质量。
+
+GateNet-CBAM 在每个 DEM 之后增加 CBAM 精炼：
+\[
+T_i = \text{CBAM}_i\!\left(\text{DEM}_i(E_i)\right), \quad i \in \{1,2,3,4\}
+\]
+随后门控单元、FPN 分支与并行分支的流程与原始 GateNet 完全相同：
+\[
+G_i = \text{GateModule}\!\left([E_i, D_{i+1}]\right)
+\]
+\[
+D_i = \text{FPN}_i\!\left(G_i^{(1)} \odot T_i\right) + \text{Up}(D_{i+1})
+\]
+CBAM 的通道注意力使 $T_i$ 在语义维度上聚焦于显著相关的特征通道，
+空间注意力进一步抑制 $T_i$ 中的背景区域响应，
+使后续门控单元在更纯净的过渡特征上生成权重，从而减少背景干扰传入 FPN 主干的可能性。
+
+% ----------------------------------------------------------------
+\subsection{GateNet-DS}
+
+GateNet-DS 针对 GateNet 仅在最终输出处计算损失、中间解码层缺少直接监督信号的问题，
+在 FPN 分支的第三（$D_3$）和第二（$D_2$）解码阶段分别添加辅助显著性预测头，实现深监督。
+
+中间解码特征 $D_3, D_2$ 分别经过 $1\times1$ 卷积生成辅助预测图，
+并上采样至输入分辨率：
+\[
+S_3^{\text{aux}} = \text{Up}\!\left(\text{Conv}_{1\times1}(D_3)\right), \quad
+S_2^{\text{aux}} = \text{Up}\!\left(\text{Conv}_{1\times1}(D_2)\right)
+\]
+训练时，辅助预测图与主预测图 $S_{\text{final}}$ 共同参与损失计算：
+\[
+\mathcal{L} = \mathcal{L}_{\text{main}}(S_{\text{final}}, G)
++ \lambda_1 \mathcal{L}_{\text{aux}}(S_3^{\text{aux}}, G)
++ \lambda_2 \mathcal{L}_{\text{aux}}(S_2^{\text{aux}}, G)
+\]
+其中 $G$ 为真实标注，$\lambda_1, \lambda_2$ 为辅助损失权重（均设为 0.4），辅助损失 $\mathcal{L}_{\text{aux}}$ 采用 BCE 与 Soft IoU 的组合。
+推理阶段辅助头被移除，不引入额外计算开销。
+
+深监督的引入使梯度可以直接传播至 $D_3, D_2$ 特征提取路径，
+避免因梯度经由过长的解码链回传而导致中间层收敛不充分，
+从而提升网络对中等分辨率特征的显著目标定位能力。
 
 %----------------------------------------------------------------
 \section{实验}
