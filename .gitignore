@@ -148,11 +148,7 @@ temp/
 # LaTeX report
 # =========================
 report/*
-!report/**/*.tex
-!report/**/*.bib
 !report/**/*.pdf
-!report/**/
-!report/fig/
 
 # =========================
 # Other
