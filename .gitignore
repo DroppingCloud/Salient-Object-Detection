@@ -148,7 +148,7 @@ temp/
 # LaTeX report
 # =========================
 report/*
-!report/**/*.pdf
+!report/main.pdf
 
 # =========================
 # Other
