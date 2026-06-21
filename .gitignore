@@ -132,7 +132,8 @@ htmlcov/
 # =========================
 Thumbs.db
 Desktop.ini
-.DS_Store
+*/.DS_Store
+*.DS_Store
 
 # =========================
 # Temporary files
@@ -152,7 +153,6 @@ report/*
 !report/**/*.pdf
 !report/**/
 !report/fig/
-!report/fig/**
 
 # =========================
 # Other
